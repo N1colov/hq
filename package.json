@@ -1,0 +1,25 @@
+{
+  "name": "hq",
+  "version": "1.0.0",
+  "description": "HQ for Even G2: Kick nudge engine + Spotify bar",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "TZ=America/Indiana/Indianapolis tsx --test tests/*.test.ts",
+    "pack": "npm run build && evenhub pack app.json dist -o hq.ehpk --sdk-ver 0.0.16",
+    "qr": "evenhub qr"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "^0.0.16",
+    "@evenrealities/pretext": "^0.1.4"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "^0.2.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  },
+  "private": true,
+  "type": "module"
+}

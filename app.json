@@ -1,0 +1,23 @@
+{
+  "package_id": "com.nicolov.hq",
+  "edition": "202601",
+  "name": "HQ",
+  "author": "Nicolov",
+  "version": "1.0.0",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "tagline": "Gets you off the couch, plays your music",
+  "description": "Kick nudge engine (quests, 5-minute trap, escalating coach, streaks) with a DisplayPlus-style Spotify bar.",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Spotify now-playing and controls, and phone notifications through ntfy.",
+      "whitelist": [
+        "https://accounts.spotify.com",
+        "https://api.spotify.com",
+        "https://ntfy.sh"
+      ]
+    }
+  ],
+  "supported_languages": ["en"]
+}
