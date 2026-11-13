@@ -96,3 +96,22 @@ test('LRC parsing and line lookup (placeholder text)', () => {
   assert.equal(lines[lineIndex(lines, 5000)].text, 'second placeholder')
   assert.equal(lineIndex(lines, 120_000), 3)
 })
+
+test('upgrade from v1 swaps placeholder quests for growth habits', async () => {
+  const { hydrate } = await import('../src/defaults')
+  const old = {
+    quests: [
+      { id: 'a', title: 'Z2 run', step: 'Put your running shoes on', time: '07:30', minutes: 45, days: [1], active: true },
+      { id: 'b', title: 'Thermo HW', step: 'Open the PDF and read problem 1', time: '19:00', minutes: 60, days: [1], active: true },
+      { id: 'demo', title: 'Test boss', step: 'Tap', time: '15:00', minutes: 10, days: [], once: '2026-11-13', active: true },
+    ],
+    settings: { buddyTopic: 'x', persona: 'drill' },
+  }
+  const s = hydrate(old)
+  const titles = s.quests.map(q => q.title)
+  assert.ok(!titles.includes('Z2 run') && !titles.includes('Thermo HW'))
+  assert.ok(titles.includes('Test boss'))
+  assert.ok(s.quests.some(q => q.rotate === 'meche'))
+  assert.equal(s.settings.persona, 'drill')
+  assert.ok(!('buddyTopic' in s.settings))
+})

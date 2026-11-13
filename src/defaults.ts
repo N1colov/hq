@@ -83,7 +83,12 @@ export function sampleQuests(): Quest[] {
   ]
 }
 
-const OLD_SAMPLE_TITLES = ['Statics review', 'Thermo HW', 'Z2 run']
+/** v1 placeholder quests (title + original step), removed on upgrade if untouched. */
+const OLD_SAMPLES = new Set([
+  'Z2 run|Put your running shoes on',
+  'Statics review|Open your notes to the last lecture',
+  'Thermo HW|Open the PDF and read problem 1',
+])
 
 export function defaultState(): AppState {
   return {
@@ -104,9 +109,12 @@ export function hydrate(raw: unknown): AppState {
   if (!raw || typeof raw !== 'object') return base
   const r = raw as Partial<AppState>
   let quests = Array.isArray(r.quests) ? r.quests : base.quests
-  // v1 shipped with placeholder quests; swap them for the growth habits if untouched.
-  const titles = quests.map(q => q.title).sort()
-  if (titles.join('|') === OLD_SAMPLE_TITLES.join('|')) quests = base.quests
+  // v1 shipped with placeholder quests: drop the untouched ones, add the growth habits once.
+  const hadOld = quests.some(q => OLD_SAMPLES.has(`${q.title}|${q.step}`))
+  if (hadOld) {
+    quests = quests.filter(q => !OLD_SAMPLES.has(`${q.title}|${q.step}`))
+    if (!quests.some(q => q.category === 'growth')) quests = [...base.quests, ...quests]
+  }
   const settings = { ...base.settings, ...(r.settings ?? {}) } as Record<string, unknown>
   for (const k of ['buddyName', 'buddyTopic', 'buddyAfterMin']) delete settings[k]
   return {
