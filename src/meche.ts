@@ -48,3 +48,8 @@ export function topicFor(dateKey: string): Topic {
   const day = Math.floor(Date.UTC(y, m - 1, d) / 86_400_000)
   return MECHE_TOPICS[((day % MECHE_TOPICS.length) + MECHE_TOPICS.length) % MECHE_TOPICS.length]
 }
+
+/** Mini checklist for a topic: the tiny step, then learn, apply, explain. */
+export function topicChecklist(t: Topic): string[] {
+  return [t.step, 'Write down the 2-3 key equations or rules', 'Work one example end to end', 'Explain it out loud in 60 seconds']
+}

@@ -49,6 +49,8 @@ def validate(plan: dict) -> list[str]:
             continue
         if len(day.get("brief", "")) > 160:
             errs.append(f"{d}: brief over 160 chars")
+        if len(day.get("tomorrow", "")) > 160:
+            errs.append(f"{d}: tomorrow over 160 chars")
         for i, q in enumerate(day["quests"]):
             where = f"{d} quest {i}"
             for k in ("title", "step", "time", "minutes"):
@@ -62,6 +64,9 @@ def validate(plan: dict) -> list[str]:
                 errs.append(f"{where}: kind must be one of {sorted(KINDS)}")
             if not (5 <= int(q.get("minutes", 0)) <= 240):
                 errs.append(f"{where}: minutes must be 5..240")
+            cl = q.get("checklist", [])
+            if not isinstance(cl, list) or len(cl) > 6 or any(not isinstance(x, str) or len(x) > 48 for x in cl):
+                errs.append(f"{where}: checklist must be up to 6 strings of <= 48 chars")
     return errs
 
 

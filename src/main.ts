@@ -5,7 +5,7 @@ import { ImuReportPace, OsEventTypeList, type EvenHubEvent } from '@evenrealitie
 import { bridge, call, connect, isReal, storageGet, storageSet } from './bridge'
 import { defaultState, hydrate } from './defaults'
 import { act, MIN, tick, type Action, currentRun, needsLockIn, today, dateKey, pad } from './engine'
-import { invalidate, isStarted, render, setImageSource } from './glasses'
+import { invalidate, isStarted, lastSpec, render, setImageSource } from './glasses'
 import { artPng, placeholderArt } from './art'
 import { getLyrics, lineIndex, setLyricsForTest } from './lyrics'
 import { syncPlan } from './plan'
@@ -15,13 +15,13 @@ import { push } from './notify'
 import { beginLogin, completeLoginIfReturning, Spotify, type SpotifyHost } from './spotify'
 import type { AppState, Nudge } from './types'
 import { mountUI, type UIApp } from './ui'
-import { buildPage, MENU_ITEMS, questIdAt, type PageKey } from './view'
+import { buildPage, type ListAction, type Nav } from './view'
 
 const STORE_KEY = 'hq.v1'
 
 let state: AppState = defaultState()
 let lastSaved = ''
-let page: PageKey = 'kick'
+let nav: Nav = { page: 'splash' }
 let foreground = true
 let wearing = true
 let ui: ReturnType<typeof mountUI> | null = null
@@ -88,7 +88,7 @@ const spotify = new Spotify(spotifyHost)
 
 const head = new HeadTracker()
 head.onNod = () => {
-  if (!state.settings.nodEnabled || page !== 'kick') return
+  if (!state.settings.nodEnabled || (nav.page !== 'today' && nav.page !== 'quest')) return
   const now = Date.now()
   const run = currentRun(state, now)
   const prompt = needsLockIn(state, now) || run?.status === 'due' || !!run?.checkinPendingSince
@@ -137,7 +137,7 @@ setImageSource(async box => {
 
 async function draw(): Promise<void> {
   const now = Date.now()
-  const spec = buildPage(page, state, musicNow(now), now)
+  const spec = buildPage(nav, state, musicNow(now), now)
   ui?.preview(spec)
   if (foreground) await render(spec)
 }
@@ -145,7 +145,7 @@ async function draw(): Promise<void> {
 function deliver(nudges: Nudge[]): void {
   for (const n of nudges) {
     note(`${n.kind}: ${n.text}`)
-    if (n.kind === 'scoreboard' && foreground && page === 'kick') page = 'score'
+    if (n.kind === 'scoreboard' && foreground && nav.page === 'today') nav = { page: 'score' }
     const offScreen = !foreground || !wearing
     if (state.settings.ntfyEnabled && (offScreen || state.settings.notifyWhenOpen)) void push(state.settings, n)
   }
@@ -189,60 +189,88 @@ function doAction(a: Action, source = 'glasses'): void {
   }
 }
 
-function go(p: PageKey): void {
-  page = p
+function go(next: Nav): void {
+  nav = next
   void draw()
 }
 
-function onClick(): void {
-  if (page === 'kick') doAction({ type: 'primary' })
-  else if (page === 'music') void spotify.togglePlay().then(draw)
-  else if (page === 'score') go('kick')
-}
-
-function onDouble(): void {
-  go(page === 'menu' ? 'kick' : 'menu')
-}
-
-function onSwipe(dir: 'up' | 'down'): void {
-  if (page === 'kick') doAction(dir === 'up' ? { type: 'done' } : { type: 'snooze' })
-  else if (page === 'music') void (dir === 'up' ? spotify.next() : spotify.previous()).then(draw)
-  else if (page === 'score') go('kick')
-}
-
-function onListSelect(index: number): void {
-  if (page === 'menu') {
-    const item = MENU_ITEMS[index]
-    if (item === '◆ Kick') go('kick')
-    else if (item === '▶ Music') go('music')
-    else if (item === '★ Quests') go('quests')
-    else if (item === '■ Scoreboard') go('score')
-    else if (item === '○ Exit HQ') void call(b => b.shutDownPageContainer(1), false)
-  } else if (page === 'quests') {
-    const id = questIdAt(state, Date.now(), index)
-    if (id) doAction({ type: 'pin', questId: id })
-    go('kick')
+/** A button on the glasses was pressed. */
+function press(a: ListAction): void {
+  switch (a.t) {
+    case 'open':
+      return go({ page: 'quest', questId: a.questId })
+    case 'start':
+      doAction({ type: 'start', questId: a.questId })
+      return go({ page: 'quest', questId: a.questId })
+    case 'checkin':
+      doAction({ type: 'checkin', questId: a.questId })
+      return go({ page: 'quest', questId: a.questId })
+    case 'step':
+      doAction({ type: 'step', questId: a.questId, index: a.index })
+      return
+    case 'done':
+      doAction({ type: 'done', questId: a.questId })
+      return
+    case 'pause':
+      doAction({ type: 'pause', questId: a.questId })
+      return
+    case 'snooze':
+      doAction({ type: 'snooze', questId: a.questId })
+      return go({ page: 'today' })
+    case 'askSkip':
+      return go({ page: 'confirm', questId: a.questId })
+    case 'skip':
+      doAction({ type: 'skip', questId: a.questId })
+      return go({ page: 'today' })
+    case 'reopen':
+      doAction({ type: 'reopen', questId: a.questId })
+      return
+    case 'lockin':
+      doAction({ type: 'lockin' })
+      return
+    case 'music':
+      return go({ page: 'music' })
+    case 'playPause':
+      void spotify.togglePlay().then(draw)
+      return
+    case 'next':
+      void spotify.next().then(draw)
+      return
+    case 'prev':
+      void spotify.previous().then(draw)
+      return
+    case 'score':
+      return go({ page: 'score' })
+    case 'exit':
+      void call(b => b.shutDownPageContainer(1), false)
+      return
+    case 'today':
+    case 'back':
+      return go({ page: 'today' })
   }
+}
+
+/** Double tap = back. From Today it opens the system exit dialog. */
+function back(): void {
+  if (nav.page === 'today') void call(b => b.shutDownPageContainer(1), false)
+  else go({ page: 'today' })
 }
 
 function handle(e: EvenHubEvent): void {
   if (e.audioEvent) return
-  if (e.menuItemClickEvent?.itemID) {
-    onListSelect((e.menuItemClickEvent.itemID ?? 1) - 1)
-    return
-  }
   if (e.listEvent) {
     const t = e.listEvent.eventType ?? 0
-    if (t === OsEventTypeList.DOUBLE_CLICK_EVENT) onDouble()
-    else if (t === OsEventTypeList.CLICK_EVENT) onListSelect(e.listEvent.currentSelectItemIndex ?? 0)
+    if (t === OsEventTypeList.DOUBLE_CLICK_EVENT) back()
+    else if (t === OsEventTypeList.CLICK_EVENT) {
+      // Map the tapped row to the button that is actually on the glasses right now.
+      const action = lastSpec?.list?.actions[e.listEvent.currentSelectItemIndex ?? 0]
+      if (action) press(action)
+    }
     return
   }
+  // Swipes on text never do anything: only list buttons act.
   if (e.textEvent) {
-    const t = e.textEvent.eventType ?? 0
-    if (t === OsEventTypeList.SCROLL_TOP_EVENT) onSwipe('up')
-    else if (t === OsEventTypeList.SCROLL_BOTTOM_EVENT) onSwipe('down')
-    else if (t === OsEventTypeList.DOUBLE_CLICK_EVENT) onDouble()
-    // Clicks on text containers arrive as sysEvent; ignore zero-type textEvents to avoid double taps.
+    if ((e.textEvent.eventType ?? 0) === OsEventTypeList.DOUBLE_CLICK_EVENT) back()
     return
   }
   const sys = e.sysEvent
@@ -270,16 +298,8 @@ function handle(e: EvenHubEvent): void {
       imuMode = 'off'
       void call(b => b.imuControl(false), false)
       return
-    case OsEventTypeList.LONG_PRESS_EVENT:
-      void spotify.togglePlay().then(draw)
-      return
-    case OsEventTypeList.LONG_PRESS_RELEASE_EVENT:
-      return
     case OsEventTypeList.DOUBLE_CLICK_EVENT:
-      onDouble()
-      return
-    case OsEventTypeList.CLICK_EVENT:
-      onClick()
+      back()
       return
   }
 }
@@ -291,9 +311,19 @@ function spawnDemo(): void {
   state.quests = state.quests.filter(q => q.id !== 'demo')
   const day = today(state, now.getTime())
   delete day.runs.demo
-  state.quests.push({ id: 'demo', title: 'Test boss', step: 'Tap your temple or ring', time: hm, minutes: 10, days: [], once: dateKey(now.getTime()), active: true })
+  state.quests.push({
+    id: 'demo',
+    title: 'Test boss',
+    step: 'Tap Start',
+    checklist: ['Tap Start (it springs a 5-min trap)', 'Check this step off', 'Now hit Done for the K.O.'],
+    time: hm,
+    minutes: 10,
+    days: [],
+    once: dateKey(now.getTime()),
+    active: true,
+  })
   day.pinnedId = 'demo'
-  page = 'kick'
+  nav = { page: 'quest', questId: 'demo' }
   note('Test drive started')
   loop()
   void save(true)
@@ -367,6 +397,8 @@ async function boot(): Promise<void> {
   if (qp.has('trap')) state.settings.trapMinutes = Number(qp.get('trap')) || 5 // testing aid
   if (qp.has('checkin')) state.settings.checkinEveryMin = Number(qp.get('checkin')) || 20 // testing aid
   if (qp.has('demo')) spawnDemo()
+  else if (qp.get('page') === 'music') nav = { page: 'music' } // testing aid
+  else setTimeout(() => nav.page === 'splash' && go({ page: 'today' }), 3500)
   if (qp.has('mockspotify')) {
     // Testing aid: fake track with placeholder lyric lines (no real lyrics).
     spotify.mockPlay('Demo Track', 'Demo Artist', 200_000, 'Another Demo - Demo Artist')

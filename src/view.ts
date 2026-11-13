@@ -1,5 +1,8 @@
-// Pure view model: turns app state into the text boxes drawn on the glasses.
-// Kept free of SDK imports so it can be tested and previewed on the phone.
+// Pure view model: turns app state into what's drawn on the glasses.
+// Every screen is a header + a list of on-screen buttons. Swiping only moves
+// the highlight (native list scroll); tapping presses the highlighted button.
+// No gesture ever completes or removes a task by itself.
+import { getTextWidth, measureTextWrap, pxTruncate } from '@evenrealities/pretext'
 import { line } from './coach'
 import {
   bossLevel,
@@ -15,10 +18,38 @@ import {
   summary,
   today,
 } from './engine'
-import { getTextWidth, measureTextWrap, pxTruncate } from '@evenrealities/pretext'
 import type { AppState, QuestRun } from './types'
 
-export type PageKey = 'kick' | 'music' | 'menu' | 'quests' | 'score'
+// ---------------------------------------------------------------- types
+
+export type PageKey = 'splash' | 'today' | 'quest' | 'confirm' | 'music' | 'score'
+
+export interface Nav {
+  page: PageKey
+  questId?: string
+}
+
+/** What a list button does when tapped. */
+export type ListAction =
+  | { t: 'open'; questId: string }
+  | { t: 'start'; questId: string }
+  | { t: 'checkin'; questId: string }
+  | { t: 'step'; questId: string; index: number }
+  | { t: 'done'; questId: string }
+  | { t: 'pause'; questId: string }
+  | { t: 'snooze'; questId: string }
+  | { t: 'askSkip'; questId: string }
+  | { t: 'skip'; questId: string }
+  | { t: 'reopen'; questId: string }
+  | { t: 'lockin' }
+  | { t: 'music' }
+  | { t: 'playPause' }
+  | { t: 'next' }
+  | { t: 'prev' }
+  | { t: 'score' }
+  | { t: 'today' }
+  | { t: 'back' }
+  | { t: 'exit' }
 
 export interface TextBox {
   id: number
@@ -45,6 +76,7 @@ export interface ListBox {
   w: number
   h: number
   items: string[]
+  actions: ListAction[]
 }
 
 export interface ImageBox {
@@ -85,40 +117,43 @@ export interface MusicView {
   error?: string
 }
 
-export const MENU_ITEMS = ['◆ Kick', '▶ Music', '★ Quests', '■ Scoreboard', '○ Exit HQ'] as const
-
+// ---------------------------------------------------------------- layout helpers
 // Pixel-accurate layout using the official G2 font metrics (@evenrealities/pretext).
-const SCREEN_W = 576
-const CARD_PAD = 8
-const CARD_BORDER = 1
-const CARD_H = 188
-/** Inner text width of the main card. */
-export const CARD_W = SCREEN_W - 2 * (CARD_PAD + CARD_BORDER)
-/** Text lines that fit in the card (27 px line height). */
-export const CARD_LINES = Math.floor((CARD_H - 2 * (CARD_PAD + CARD_BORDER)) / 27)
+
+const W = 576
+const LINE_H = 27
 const SPACE_W = getTextWidth(' ') || 5
-const BAR_SEGMENTS = Math.floor((SCREEN_W - getTextWidth('|| ')) / (getTextWidth('━') || 20)) - 1
+const BAR_SEGMENTS = Math.floor((W - getTextWidth('|| ')) / (getTextWidth('━') || 20)) - 1
+
+/** Header card: 3 text lines inside a rounded border. */
+const HEAD = { x: 0, y: 58, w: W, h: 3 * LINE_H + 2 * 5 + 1, pad: 4, border: 1 }
+export const HEAD_W = HEAD.w - 2 * (HEAD.pad + HEAD.border)
+/** Button list under the header (40 px per item, ~3 visible, scrolls). */
+const LIST = { x: 0, y: HEAD.y + HEAD.h + 2, w: W, pad: 4 }
+const LIST_H = 288 - LIST.y
+/** Usable text width of a list item (padding + firmware item inset). */
+const itemW = (w: number) => w - 2 * LIST.pad - 2 * 12
 
 export function fit(text: string, px: number): string {
   return pxTruncate(text, px)
 }
 
 /** Left text, then spaces, then right text so the right side lands near the right edge. */
-export function row(left: string, right: string, width = CARD_W): string {
+export function row(left: string, right: string, width = HEAD_W): string {
   const rw = getTextWidth(right)
   const leftFit = fit(left, width - rw - 3 * SPACE_W)
   const gap = Math.max(2, Math.floor((width - getTextWidth(leftFit) - rw) / SPACE_W) - 1)
   return `${leftFit}${' '.repeat(gap)}${right}`
 }
 
-export function center(text: string, width = CARD_W): string {
+export function center(text: string, width = HEAD_W): string {
   const t = fit(text, width)
   const pad = Math.max(0, Math.floor((width - getTextWidth(t)) / 2 / SPACE_W))
   return ' '.repeat(pad) + t
 }
 
 /** Trim a paragraph to at most `maxLines` wrapped lines inside `width`. */
-export function clampLines(text: string, maxLines: number, width = CARD_W): string {
+export function clampLines(text: string, maxLines: number, width = HEAD_W): string {
   if (maxLines <= 0 || !text) return ''
   if (measureTextWrap(text, width).lineCount <= maxLines) return text
   const words = text.split(' ')
@@ -130,23 +165,27 @@ export function clampLines(text: string, maxLines: number, width = CARD_W): stri
   return fit(text, width)
 }
 
-function lineCount(text: string, width = CARD_W): number {
-  return text ? measureTextWrap(text, width).lineCount : 1
-}
-
-/** Assemble card lines; the `flex` line (coach text) gets whatever room is left. */
-function card(lines: Array<string | { flex: string }>): string {
-  const fixed = lines.reduce<number>((n, l) => n + (typeof l === 'string' ? lineCount(l) : 0), 0)
-  const room = Math.max(1, CARD_LINES - fixed)
-  return lines
-    .map(l => (typeof l === 'string' ? l : clampLines(l.flex, room)))
-    .join('\n')
-}
-
 export function hpBar(frac: number, n = 10): string {
   const filled = Math.round(Math.max(0, Math.min(1, frac)) * n)
   return '■'.repeat(filled) + '□'.repeat(n - filled)
 }
+
+function thinBar(frac: number, n: number): string {
+  const filled = Math.round(Math.max(0, Math.min(1, frac)) * n)
+  return '━'.repeat(filled) + '─'.repeat(n - filled)
+}
+
+/** A recent toast, but only if it isn't about some other quest than the one on screen. */
+function toastOr(s: AppState, now: number, fallback: string, questId?: string): string {
+  const t = s.toast
+  if (!t || t.until <= now) return fallback
+  if (t.questId && t.questId !== questId) return fallback
+  return t.text
+}
+
+const DAY = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
+
+// ---------------------------------------------------------------- music strip
 
 /** DisplayPlus-style now-playing line: "Song - Artist    ( 0:41 - 4:00 )" */
 export function musicLine(m: MusicView): string {
@@ -155,302 +194,303 @@ export function musicLine(m: MusicView): string {
   if (m.error) return `Spotify: ${m.error}`
   if (!m.title) return 'Nothing playing'
   const right = `    ( ${fmtClock(m.progressMs)} - ${fmtClock(m.durationMs)} )`
-  return `${fit(`${m.title} - ${m.artist}`, SCREEN_W - getTextWidth(right) - 4)}${right}`
+  return `${fit(`${m.title} - ${m.artist}`, W - getTextWidth(right) - 4)}${right}`
 }
 
 export function musicBar(m: MusicView): string {
   if (!m.connected || !m.title || !m.durationMs) return ' '
-  const frac = m.progressMs / m.durationMs
-  const filled = Math.round(Math.max(0, Math.min(1, frac)) * BAR_SEGMENTS)
-  return `${m.playing ? '▶' : '||'} ${'━'.repeat(filled)}${'─'.repeat(BAR_SEGMENTS - filled)}`
+  return `${m.playing ? '▶' : '||'} ${thinBar(m.progressMs / m.durationMs, BAR_SEGMENTS)}`
 }
-
-function statsLine(s: AppState, now: number): string {
-  const lv = playerLevel(s.profile.xp)
-  const streak = s.profile.streak + (Object.values(today(s, now).runs).some(r => r.status === 'done') ? 1 : 0)
-  return `LV ${lv.level} · streak ${streak}`
-}
-
-function toastOr(s: AppState, now: number, fallback: string): string {
-  return s.toast && s.toast.until > now ? s.toast.text : fallback
-}
-
-export interface KickCard {
-  card: string
-  hint: string
-}
-
-const HP = (s: AppState, run: QuestRun, now: number) => `HP ${hpBar(hpFrac(s, run, now))}`
-
-export function kickCard(s: AppState, now: number): KickCard {
-  const day = today(s, now)
-  const run = currentRun(s, now)
-  const st = s.settings
-
-  if (run?.status === 'focus' && run.checkinPendingSince) {
-    const q = questOf(s, run.questId)
-    const left = st.checkinGraceMin * 60_000 - (now - run.checkinPendingSince)
-    return {
-      card: card([
-        row(`◆ ${questLabel(q, day.date).title.toUpperCase()}`, `x${run.combo} COMBO`),
-        '',
-        center('STILL LOCKED IN?'),
-        center('tap = yes'),
-        '',
-        center(`auto-pause in ${fmtClock(left)}`),
-      ]),
-      hint: 'tap yes · ↑ K.O. · ↓ pause',
-    }
-  }
-
-  if (needsLockIn(s, now) && (!run || run.status === 'waiting')) {
-    const runs = Object.values(day.runs).sort((a, b) => a.dueAt - b.dueAt)
-    const brief = s.plan?.briefs?.[day.date]
-    const rows = runs.slice(0, CARD_LINES - (brief ? 3 : 2)).map(r => {
-      const q = questOf(s, r.questId)
-      return row(`○ ${fmtHM(q?.time ?? '')}   ${questLabel(q, day.date).title}`, `${q?.minutes} min`)
-    })
-    const more = runs.length > rows.length ? ` (+${runs.length - rows.length} more)` : ''
-    return {
-      card: card([
-        `TODAY: ${runs.length} QUEST${runs.length === 1 ? '' : 'S'}${more}`,
-        ...(brief ? [fit(brief, CARD_W)] : []),
-        ...rows,
-        center('tap = lock in   (+20 XP)'),
-      ]),
-      hint: 'tap lock in · 2x menu',
-    }
-  }
-
-  if (!run) {
-    const sum = summary(s, now)
-    return {
-      card: card([
-        '★ ALL CLEAR',
-        '',
-        sum.scheduled ? `${sum.kos}/${sum.scheduled} K.O. today · ${sum.focusMin} min focus · +${sum.xp} XP` : 'No quests today.',
-        '',
-        { flex: toastOr(s, now, line(st.persona, 'allclear', {}, 0)) },
-      ]),
-      hint: '2x menu',
-    }
-  }
-
-  const q = questOf(s, run.questId)
-  const label = questLabel(q, day.date)
-  const title = label.title.toUpperCase()
-  const step = label.step ? fit(`▶ ${label.step}`, CARD_W) : ''
-
-  if (run.status === 'waiting') {
-    return {
-      card: card([
-        row(`○ NEXT: ${title}`, `in ${fmtClock(run.dueAt - now)}`),
-        fit(`${fmtHM(q?.time ?? '')} · ${q?.minutes} min block${q?.note ? ` · ${q.note}` : ''}`, CARD_W),
-        '',
-        { flex: toastOr(s, now, step) },
-      ]),
-      hint: 'tap start early · 2x menu',
-    }
-  }
-
-  if (run.status === 'due') {
-    const late = Math.max(0, Math.floor((now - run.dueAt) / 60_000))
-    return {
-      card: card([
-        row(`◆ ${title}  Lv ${bossLevel(run)}`, HP(s, run, now)),
-        '',
-        { flex: toastOr(s, now, run.lastLine ?? '') },
-        '',
-        step,
-        fit(`waiting ${late} min${run.dodges ? ` · dodged ${run.dodges}x` : ''}${q?.note ? ` · ${q.note}` : ''}`, CARD_W),
-      ]),
-      hint: 'tap start · ↑ done · ↓ snooze',
-    }
-  }
-
-  if (run.status === 'trap') {
-    const left = (run.trapEndsAt ?? now) - now
-    return {
-      card: card([
-        row(`◆ ${title} · ${st.trapMinutes}-MIN TRAP`, HP(s, run, now)),
-        center(`${fmtClock(left)} left`),
-        trapBar(run, now, st.trapMinutes),
-        { flex: toastOr(s, now, run.lastLine ?? '') },
-        step,
-      ]),
-      hint: 'tap status · ↑ K.O. · ↓ pause',
-    }
-  }
-
-  // focus
-  const total = (q?.minutes ?? 30) * 60_000
-  const nextCheck = run.nextCheckinAt && st.checkinEveryMin > 0 ? `next check-in in ${fmtClock(run.nextCheckinAt - now)}` : ''
-  return {
-    card: card([
-      row(`◆ ${title} · LOCKED IN`, `x${run.combo} COMBO`),
-      '',
-      row(`focus ${fmtClock(focusTotal(run, now))} / ${fmtClock(total)}`, HP(s, run, now)),
-      '',
-      { flex: toastOr(s, now, run.lastLine ?? '') },
-      nextCheck,
-    ]),
-    hint: 'tap status · ↑ K.O. · ↓ pause',
-  }
-}
-
-function trapBar(run: QuestRun, now: number, trapMin: number): string {
-  const total = trapMin * 60_000
-  const elapsed = total - Math.max(0, (run.trapEndsAt ?? now) - now)
-  const n = 20
-  const filled = Math.round((elapsed / total) * n)
-  return center(`${'━'.repeat(filled)}${'─'.repeat(n - filled)}`)
-}
-
-export function scoreCard(s: AppState, now: number): string {
-  const sum = summary(s, now)
-  const lv = playerLevel(s.profile.xp)
-  return card([
-    row('■ SCOREBOARD', `LV ${lv.level}  ${hpBar(lv.into / lv.span, 8)}`),
-    '',
-    row('K.O.s today', `${sum.kos} / ${sum.scheduled}`, 360),
-    row('Focus', `${sum.focusMin} min`, 360),
-    row('XP today', `+${sum.xp}`, 360),
-    row('Streak', `${sum.streak} days  (best ${Math.max(s.profile.bestStreak, sum.streak)})`, 360),
-  ])
-}
-
-const LIST_W = SCREEN_W - 2 * 4 - 2 * 12
-
-export function questItems(s: AppState, now: number): string[] {
-  const day = today(s, now)
-  const runs = Object.values(day.runs).sort((a, b) => a.dueAt - b.dueAt)
-  if (!runs.length) return ['No quests today. Add some in HQ on your phone.']
-  const icon: Record<string, string> = { waiting: '○', due: '◆', trap: '▶', focus: '▶', done: '●', skipped: '-' }
-  const tag: Record<string, string> = { waiting: '', due: 'DUE', trap: 'TRAP', focus: 'LOCKED IN', done: 'K.O.', skipped: 'skipped' }
-  return runs.slice(0, 20).map(r => {
-    const q = questOf(s, r.questId)
-    return fit(row(`${icon[r.status]} ${fmtHM(q?.time ?? '')}   ${questLabel(q, day.date).title}`, tag[r.status], LIST_W), LIST_W).slice(0, 63)
-  })
-}
-
-export function questIdAt(s: AppState, now: number, index: number): string | undefined {
-  const day = today(s, now)
-  return Object.values(day.runs).sort((a, b) => a.dueAt - b.dueAt)[index]?.questId
-}
-
-// ---------------------------------------------------------------- layouts
-
-const W = 576
 
 function topBoxes(m: MusicView, lyricLine: boolean): TextBox[] {
   // Like DisplayPlus: the current lyric sits under the song when available.
   const second = lyricLine && m.lyric ? fit(`  ${m.lyric}`, W - 4) : musicBar(m)
   return [
-    { id: 1, name: 'music', x: 0, y: 0, w: W, h: 34, text: musicLine(m) },
-    { id: 2, name: 'mbar', x: 0, y: 30, w: W, h: 30, text: second, dim: 2 },
+    { id: 1, name: 'music', x: 0, y: 0, w: W, h: 30, text: musicLine(m) },
+    { id: 2, name: 'mbar', x: 0, y: 28, w: W, h: 28, text: second, dim: 2 },
   ]
 }
 
-/** Music page: album art on the left, lyrics (or track info) on the right. */
-export const ART = { x: 8, y: 72, size: 128 }
-const LYR_X = ART.x + ART.size + 12
-const LYR_W = W - LYR_X
-const LYR_INNER = LYR_W - 2 * 4
+function header(lines: string[]): TextBox {
+  return {
+    id: 3,
+    name: 'head',
+    x: HEAD.x,
+    y: HEAD.y,
+    w: HEAD.w,
+    h: HEAD.h,
+    text: lines.slice(0, 3).map(l => fit(l, HEAD_W)).join('\n'),
+    border: HEAD.border,
+    borderColor: 9,
+    radius: 8,
+    pad: HEAD.pad,
+  }
+}
+
+function list(name: string, items: Array<[string, ListAction]>, x = LIST.x, y = LIST.y, w = LIST.w, h = LIST_H): ListBox {
+  const safe = items.length ? items.slice(0, 20) : [['← Back', { t: 'back' }] as [string, ListAction]]
+  return {
+    id: 5,
+    name,
+    x,
+    y,
+    w,
+    h,
+    items: safe.map(([label]) => fit(label, itemW(w)).slice(0, 63)),
+    actions: safe.map(([, a]) => a),
+  }
+}
+
+// ---------------------------------------------------------------- today (checklist)
+
+const ICON: Record<string, string> = { waiting: '□', due: '◆', trap: '▶', focus: '▶', done: '■', skipped: '-' }
+
+function statusLine(s: AppState, now: number): string {
+  const lv = playerLevel(s.profile.xp)
+  const sum = summary(s, now)
+  return `LV ${lv.level} · ${s.profile.xp} XP · streak ${sum.streak}`
+}
+
+export function todayPage(s: AppState, m: MusicView, now: number): PageSpec {
+  const day = today(s, now)
+  const runs = Object.values(day.runs).sort((a, b) => a.dueAt - b.dueAt)
+  const done = runs.filter(r => r.status === 'done').length
+  const live = runs.filter(r => r.status !== 'skipped').length
+  const d = new Date(now)
+  const run = currentRun(s, now)
+  const label = (r: QuestRun) => questLabel(questOf(s, r.questId), day.date)
+
+  // Line 2: what matters right now.
+  let nowLine: string
+  if (run?.status === 'trap') nowLine = row(`▶ ${label(run).title}`, `trap ${fmtClock((run.trapEndsAt ?? now) - now)}`)
+  else if (run?.status === 'focus' && run.checkinPendingSince) nowLine = row(`▶ ${label(run).title}`, 'still on it?')
+  else if (run?.status === 'focus') nowLine = row(`▶ ${label(run).title}`, `locked in ${fmtClock(focusTotal(run, now))}`)
+  else if (run?.status === 'due') nowLine = row(`◆ ${label(run).title}`, `${Math.max(0, Math.floor((now - run.dueAt) / 60_000))} min late`)
+  else if (run) nowLine = row(`○ NEXT  ${label(run).title}`, `in ${fmtClock(run.dueAt - now)}`)
+  else nowLine = live ? '★ ALL CLEAR. Go live a little.' : '★ Nothing on the list today.'
+
+  const coach = run?.status === 'due' ? run.lastLine : undefined
+  const third = toastOr(s, now, coach ?? s.plan?.briefs?.[day.date] ?? statusLine(s, now), run?.questId)
+
+  const items: Array<[string, ListAction]> = []
+  if (run?.status === 'focus' && run.checkinPendingSince) items.push([`▶ Yes, still on ${label(run).title}`, { t: 'checkin', questId: run.questId }])
+  else if (run?.status === 'trap' || run?.status === 'focus') items.push([`▶ Open ${label(run).title}`, { t: 'open', questId: run.questId }])
+  else if (run?.status === 'due') items.push([`▶ Start ${label(run).title}`, { t: 'start', questId: run.questId }])
+  else if (needsLockIn(s, now)) items.push(['▶ Lock in today (+20 XP)', { t: 'lockin' }])
+  for (const r of runs) {
+    const tag = r.status === 'done' ? '  K.O.' : r.status === 'skipped' ? '  skipped' : ''
+    items.push([`${ICON[r.status]} ${fmtHM(questOf(s, r.questId)?.time ?? '')}   ${label(r).title}${tag}`, { t: 'open', questId: r.questId }])
+  }
+  items.push(['♥ Music', { t: 'music' }], ['★ Scoreboard', { t: 'score' }], ['○ Exit HQ', { t: 'exit' }])
+
+  return {
+    page: 'today',
+    texts: [
+      ...topBoxes(m, s.settings.lyricsOnKick),
+      header([row(`TODAY · ${DAY[d.getDay()]} ${d.getMonth() + 1}/${d.getDate()}`, `${done}/${live}  ${hpBar(live ? done / live : 0, 8)}`), nowLine, third]),
+    ],
+    list: list('today', items.slice(0, 20)),
+  }
+}
+
+// ---------------------------------------------------------------- quest detail
+
+export function questPage(s: AppState, m: MusicView, now: number, questId: string): PageSpec {
+  const day = today(s, now)
+  const run = day.runs[questId]
+  const q = questOf(s, questId)
+  if (!run || !q) return todayPage(s, m, now)
+  const st = s.settings
+  const lab = questLabel(q, day.date)
+  const note = q.note ? ` · ${q.note}` : ''
+
+  let state: string
+  switch (run.status) {
+    case 'waiting':
+      state = `starts ${fmtHM(q.time)} · ${q.minutes} min${note}`
+      break
+    case 'due': {
+      const late = Math.max(0, Math.floor((now - run.dueAt) / 60_000))
+      state = `due ${fmtHM(q.time)} · ${late} min late${run.dodges ? ` · dodged ${run.dodges}x` : ''}${note}`
+      break
+    }
+    case 'trap': {
+      const total = st.trapMinutes * 60_000
+      const left = Math.max(0, (run.trapEndsAt ?? now) - now)
+      state = row(`${st.trapMinutes}-MIN TRAP  ${fmtClock(left)} left`, thinBar(1 - left / total, 10))
+      break
+    }
+    case 'focus':
+      state = run.checkinPendingSince
+        ? row('STILL ON IT?', `auto-pause ${fmtClock(st.checkinGraceMin * 60_000 - (now - run.checkinPendingSince))}`)
+        : row(`LOCKED IN  ${fmtClock(focusTotal(run, now))} / ${fmtClock(q.minutes * 60_000)}`, `x${run.combo} combo`)
+      break
+    case 'done':
+      state = `K.O.  +${run.koXp ?? run.xp} XP${note}`
+      break
+    default:
+      state = 'Skipped today. No penalty.'
+  }
+  const checks = run.checks ?? []
+  const nextStep = lab.checklist.find((_, i) => !checks[i]) ?? lab.step
+  const third = toastOr(s, now, run.status === 'due' && run.lastLine ? run.lastLine : nextStep ? `▶ ${nextStep}` : '', questId)
+
+  const items: Array<[string, ListAction]> = []
+  const open = run.status !== 'done' && run.status !== 'skipped'
+  if (run.status === 'focus' && run.checkinPendingSince) items.push(['▶ Yes, still on it', { t: 'checkin', questId }])
+  if (run.status === 'waiting' || run.status === 'due') items.push([`▶ Start (${st.trapMinutes}-min trap)`, { t: 'start', questId }])
+  // The list can't keep its highlight across a rebuild, so the next thing to do is
+  // always first: tap, tap, tap walks down the checklist.
+  const todo = lab.checklist.map((step, i) => [step, i] as const).filter(([, i]) => !checks[i])
+  const ticked = lab.checklist.map((step, i) => [step, i] as const).filter(([, i]) => checks[i])
+  if (open) todo.forEach(([step, i]) => items.push([`□ ${step}`, { t: 'step', questId, index: i }]))
+  if (run.status === 'waiting' || run.status === 'due') {
+    items.push(['■ Mark done', { t: 'done', questId }], ['○ Snooze 10 min', { t: 'snooze', questId }], ['- Skip today...', { t: 'askSkip', questId }])
+  } else if (open) {
+    items.push(['■ Done (K.O.)', { t: 'done', questId }], ['|| Pause', { t: 'pause', questId }])
+  } else {
+    items.push(['○ Undo (put it back)', { t: 'reopen', questId }])
+  }
+  if (open) ticked.forEach(([step, i]) => items.push([`■ ${step}`, { t: 'step', questId, index: i }]))
+  items.push(['← Back', { t: 'today' }])
+
+  return {
+    page: 'quest',
+    texts: [
+      ...topBoxes(m, s.settings.lyricsOnKick),
+      header([row(`◆ ${lab.title.toUpperCase()}  Lv ${bossLevel(run)}`, `HP ${hpBar(hpFrac(s, run, now))}`), state, third]),
+    ],
+    list: list('quest', items),
+  }
+}
+
+export function confirmPage(s: AppState, m: MusicView, now: number, questId: string): PageSpec {
+  const day = today(s, now)
+  const lab = questLabel(questOf(s, questId), day.date)
+  return {
+    page: 'confirm',
+    texts: [
+      ...topBoxes(m, s.settings.lyricsOnKick),
+      header([`SKIP ${lab.title.toUpperCase()}?`, 'It comes off today. No XP, no penalty.', 'Streak is safe. You can undo it later.']),
+    ],
+    list: list('confirm', [
+      ['← No, keep it', { t: 'open', questId }],
+      ['- Yes, skip it today', { t: 'skip', questId }],
+    ]),
+  }
+}
+
+// ---------------------------------------------------------------- music
+
+/** Music page: album art on the left, lyrics or track info + buttons on the right. */
+export const ART = { x: 8, y: 62, size: 128 }
+const RX = ART.x + ART.size + 10
+const RW = W - RX
+const PANEL_INNER = RW - 2 * 4
 
 function musicPanel(m: MusicView): string {
-  const lines: string[] = []
-  if (!m.connected) {
-    return clampLines('Set up Spotify in HQ on your phone (Spotify section).', 5, LYR_INNER)
-  }
+  if (!m.connected) return clampLines('Set up Spotify in HQ on your phone (Spotify section).', 3, PANEL_INNER)
   if (!m.title) return 'Start something in Spotify.'
   if (m.lyric !== undefined && m.lyricNext) {
     // Current line in brackets, next lines indented (DisplayPlus style).
-    const cur = clampLines(`[ ${m.lyric || '...'} ]`, 2, LYR_INNER)
-    lines.push(cur)
-    let used = cur.split('\n').length + measureTextWrap(cur, LYR_INNER).lineCount - 1
-    for (const next of m.lyricNext) {
-      if (used >= 5) break
-      const l = clampLines(`   ${next}`, 1, LYR_INNER)
-      lines.push(l)
-      used += 1
-    }
-    return lines.join('\n')
+    const out = [fit(`[ ${m.lyric || '...'} ]`, PANEL_INNER)]
+    for (const next of m.lyricNext.slice(0, 2)) out.push(fit(`   ${next}`, PANEL_INNER))
+    return out.join('\n')
   }
-  lines.push(fit(m.title, LYR_INNER), fit(m.artist, LYR_INNER))
-  if (m.album) lines.push(fit(m.album, LYR_INNER))
-  lines.push('')
-  if (m.upNext) lines.push(fit(`UP NEXT  ${m.upNext}`, LYR_INNER))
-  return lines.join('\n')
+  return [fit(m.title, PANEL_INNER), fit(m.artist, PANEL_INNER), fit(m.upNext ? `UP NEXT  ${m.upNext}` : m.album ?? '', PANEL_INNER)].join('\n')
 }
 
-export function buildPage(page: PageKey, s: AppState, m: MusicView, now: number): PageSpec {
-  const stats = statsLine(s, now)
-  if (page === 'menu') {
-    return {
-      page,
-      texts: [{ id: 1, name: 'music', x: 0, y: 0, w: W, h: 34, text: musicLine(m) }],
-      list: { id: 5, name: 'menu', x: 0, y: 40, w: W, h: 248, items: [...MENU_ITEMS] },
-    }
-  }
-  if (page === 'quests') {
-    return {
-      page,
-      texts: [{ id: 1, name: 'music', x: 0, y: 0, w: W, h: 34, text: musicLine(m) }],
-      list: { id: 5, name: 'quests', x: 0, y: 40, w: W, h: 248, items: questItems(s, now) },
-    }
-  }
-  let cardText: string
-  let hint: string
-  if (page === 'music') {
-    return {
-      page,
-      texts: [
-        ...topBoxes(m, false),
-        { id: 3, name: 'lyrics', x: LYR_X, y: 64, w: LYR_W, h: CARD_H, text: musicPanel(m), pad: 4, capture: true },
-        { id: 4, name: 'hint', x: 0, y: 254, w: 380, h: 34, text: fit('tap play/pause · ↑ next · ↓ prev', 376), dim: 2 },
-        { id: 6, name: 'stats', x: 392, y: 254, w: 184, h: 34, text: fit(m.device ? `on ${m.device}` : stats, 180), dim: 3 },
-      ],
-      images: m.connected && m.artUrl ? [{ id: 7, name: 'art', x: ART.x, y: ART.y, w: ART.size, h: ART.size, src: m.artUrl }] : [],
-    }
-  }
-  if (page === 'score') {
-    cardText = scoreCard(s, now)
-    hint = 'tap back · 2x menu'
-  } else {
-    const k = kickCard(s, now)
-    cardText = k.card
-    hint = k.hint
-  }
+export function musicPage(m: MusicView): PageSpec {
+  const items: Array<[string, ListAction]> = m.connected
+    ? [
+        [m.playing ? '|| Pause' : '▶ Play', { t: 'playPause' }],
+        ['▶▶ Skip', { t: 'next' }],
+        ['◀◀ Previous', { t: 'prev' }],
+        ['← Back', { t: 'today' }],
+      ]
+    : [['← Back', { t: 'today' }]]
+  const state = !m.connected ? 'NOT\nCONNECTED' : m.title ? `${m.playing ? 'PLAYING' : 'PAUSED'}\n${fit(m.device, 128)}` : 'IDLE'
   return {
-    page,
+    page: 'music',
     texts: [
-      ...topBoxes(m, s.settings.lyricsOnKick),
-      {
-        id: 3,
-        name: 'card',
-        x: 0,
-        y: 64,
-        w: W,
-        h: CARD_H,
-        text: cardText!,
-        border: 1,
-        borderColor: 6,
-        radius: 6,
-        pad: 8,
-        capture: true,
-      },
-      { id: 4, name: 'hint', x: 0, y: 254, w: 380, h: 34, text: fit(hint, 376), dim: 2 },
-      { id: 6, name: 'stats', x: 392, y: 254, w: 184, h: 34, text: fit(stats, 180), dim: 3 },
+      ...topBoxes(m, false),
+      { id: 3, name: 'panel', x: RX, y: 58, w: RW, h: 3 * LINE_H + 8, text: musicPanel(m), pad: 4 },
+      { id: 4, name: 'mstate', x: ART.x, y: ART.y + ART.size + 6, w: ART.size + 4, h: 2 * LINE_H + 4, text: state, dim: 2 },
     ],
+    list: list('music', items, RX, 152, RW, 288 - 152),
+    images: m.connected && m.artUrl ? [{ id: 7, name: 'art', x: ART.x, y: ART.y, w: ART.size, h: ART.size, src: m.artUrl }] : [],
   }
 }
 
-/** Structure signature: rebuild the page only when this changes. */
+// ---------------------------------------------------------------- scoreboard + splash
+
+export function scorePage(s: AppState, m: MusicView, now: number): PageSpec {
+  const sum = summary(s, now)
+  const lv = playerLevel(s.profile.xp)
+  const tomorrow = s.plan?.briefs?.[`${today(s, now).date}:tomorrow`]
+  const lines = [
+    row('■ SCOREBOARD', `LV ${lv.level}  ${hpBar(lv.into / lv.span, 8)}`),
+    row('K.O.s today', `${sum.kos} / ${sum.scheduled}`, 340),
+    row('Focus', `${sum.focusMin} min`, 340),
+    row('XP today', `+${sum.xp}`, 340),
+    row('Streak', `${sum.streak} days  (best ${Math.max(s.profile.bestStreak, sum.streak)})`, 340),
+  ]
+  if (tomorrow) lines.push(fit(`TOMORROW  ${tomorrow}`, HEAD_W))
+  return {
+    page: 'score',
+    texts: [
+      { id: 1, name: 'music', x: 0, y: 0, w: W, h: 30, text: musicLine(m) },
+      { id: 3, name: 'head', x: 0, y: 34, w: W, h: 6 * LINE_H + 10, text: lines.join('\n'), border: 1, borderColor: 9, radius: 8, pad: 4 },
+    ],
+    list: list('score', [['← Back', { t: 'today' }]], 0, 34 + 6 * LINE_H + 12, W, 288 - (34 + 6 * LINE_H + 12)),
+  }
+}
+
+export function splashPage(s: AppState, now: number): PageSpec {
+  const day = today(s, now)
+  const runs = Object.values(day.runs).filter(r => r.status !== 'skipped')
+  const d = new Date(now)
+  const lv = playerLevel(s.profile.xp)
+  const brief = s.plan?.briefs?.[day.date] ?? line(s.settings.persona, runs.length ? 'lockin' : 'allclear', {}, 0)
+  const text = [
+    '',
+    center('H Q   ·   O N L I N E', W - 16),
+    center(`${DAY[d.getDay()]} ${d.getMonth() + 1}/${d.getDate()}  ·  ${runs.length} QUEST${runs.length === 1 ? '' : 'S'}  ·  LV ${lv.level}`, W - 16),
+    center(thinBar(1, 20), W - 16),
+    clampLines(brief, 2, W - 16),
+  ].join('\n')
+  return {
+    page: 'splash',
+    texts: [{ id: 3, name: 'splash', x: 0, y: 8, w: W, h: 200, text, border: 1, borderColor: 9, radius: 10, pad: 7 }],
+    list: list('splash', [['▶ Enter HQ', { t: 'today' }]], 140, 214, 296, 288 - 214),
+  }
+}
+
+// ---------------------------------------------------------------- router
+
+export function buildPage(nav: Nav, s: AppState, m: MusicView, now: number): PageSpec {
+  switch (nav.page) {
+    case 'splash':
+      return splashPage(s, now)
+    case 'quest':
+      return nav.questId ? questPage(s, m, now, nav.questId) : todayPage(s, m, now)
+    case 'confirm':
+      return nav.questId ? confirmPage(s, m, now, nav.questId) : todayPage(s, m, now)
+    case 'music':
+      return musicPage(m)
+    case 'score':
+      return scorePage(s, m, now)
+    default:
+      return todayPage(s, m, now)
+  }
+}
+
+/** Structure signature: rebuild the page only when this changes (lists can't update in place). */
 export function structureKey(p: PageSpec): string {
   const t = [
     ...p.texts.map(b => `${b.id}:${b.x},${b.y},${b.w},${b.h}`),
     ...(p.images ?? []).map(b => `i${b.id}:${b.x},${b.y},${b.w},${b.h}`),
   ].join('|')
-  const l = p.list ? `L${p.list.id}:${p.list.items.join('\u0001')}` : ''
+  const l = p.list ? `L${p.list.id}:${p.list.x},${p.list.y},${p.list.w},${p.list.h}:${p.list.items.join('\u0001')}` : ''
   return `${p.page}#${t}#${l}`
 }

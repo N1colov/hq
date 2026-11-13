@@ -11,10 +11,14 @@ export interface PlanQuest {
   minutes: number
   kind?: QuestCategory
   note?: string
+  /** 3-6 sub-steps; the first is the tiny first step. */
+  checklist?: string[]
 }
 
 export interface PlanDay {
   brief?: string
+  /** Shown with the evening scoreboard: a heads-up about tomorrow. */
+  tomorrow?: string
   quests: PlanQuest[]
 }
 
@@ -103,17 +107,21 @@ export function mergePlan(s: AppState, plan: PlanFile, now: number): number {
         category: pq.kind ?? 'task',
         source: 'plan',
         note: pq.note?.slice(0, 40),
+        checklist: Array.isArray(pq.checklist)
+          ? pq.checklist.filter(x => typeof x === 'string' && x.trim()).map(x => x.slice(0, 48)).slice(0, 6)
+          : undefined,
         active: true,
       }
       s.quests.push(q)
       added++
     }
     if (pd.brief) s.plan.briefs[d] = pd.brief.slice(0, 160)
+    if (pd.tomorrow) s.plan.briefs[`${d}:tomorrow`] = pd.tomorrow.slice(0, 160)
   }
   // Remember which days are planned (growth habits are replaced on those days).
   const keep = new Set([...s.plan.dates.filter(d => d >= todayKey), ...dates])
   s.plan.dates = [...keep].sort()
-  for (const k of Object.keys(s.plan.briefs)) if (k < todayKey) delete s.plan.briefs[k]
+  for (const k of Object.keys(s.plan.briefs)) if (k.slice(0, 10) < todayKey) delete s.plan.briefs[k]
   // Old plan quests from past days are just clutter.
   s.quests = s.quests.filter(q => !(q.source === 'plan' && q.once && q.once < todayKey))
   s.plan.generatedAt = plan.generatedAt

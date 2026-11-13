@@ -16,6 +16,8 @@ export interface Quest {
   rotate?: 'meche'
   /** Extra context shown under the step (e.g. "Due today", "Exam Mon"). */
   note?: string
+  /** Sub-steps shown as a checklist on the glasses (first = the tiny first step). */
+  checklist?: string[]
   /** The tiniest possible first step, shown when you stall. */
   step: string
   /** Start time, "HH:MM" 24h local. */
@@ -58,7 +60,11 @@ export interface QuestRun {
   finalWarned?: boolean
   /** Latest coach line for this quest, shown on the card. */
   lastLine?: string
+  /** Which checklist sub-steps are ticked. */
+  checks?: boolean[]
   doneAt?: number
+  /** XP granted at K.O. (so an undo can take it back). */
+  koXp?: number
   xp: number
 }
 
@@ -143,7 +149,7 @@ export interface AppState {
   spotify: SpotifyAuth
   plan: PlanMeta
   /** Short message shown on the HUD (coach line, feedback). */
-  toast?: { text: string; until: number }
+  toast?: { text: string; until: number; questId?: string }
   /** Scoreboard overlay requested by the engine. */
   showScoreboardUntil?: number
 }

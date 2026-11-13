@@ -1,7 +1,7 @@
 # HQ for Even G2
 
 One app you open once and leave open. The top of the display is a DisplayPlus-style Spotify
-bar (song, time, and the current lyric line); the rest is **Kick**, a nudge engine that makes starting
+bar (song, time, and the current lyric line); the rest is **Today**, a checklist with a nudge engine (Kick) built in that makes starting
 stupid easy and ignoring it annoying. Every morning an AI planner reads your Notion and plans the day.
 
 ```
@@ -20,7 +20,7 @@ tap start · ↑ done · ↓ snooze        LV 4 · streak 6
 
 - **Quests** are your time blocks. Each one is a boss whose HP is the block length.
 - **Growth habits (★)** come built in: train (gym / tri), exam prep, internship apps, and a **MechE topic of the day** that rotates through 32 core topics (Mohr's circle, GD&T, gear trains, PID, Rankine...).
-- **Daily AI plan**: every morning a scheduled Claude run reads your Notion Schedule and Life Schedule, then plans today and tomorrow: blocks for anything due, exam prep that ramps up as the exam gets close, and the growth habits fitted around fixed events. See `plan/PLANNER.md`.
+- **Daily AI plan**: every morning a scheduled Claude run reads your Notion Schedule and Life Schedule, then plans today and tomorrow: blocks for anything due, exam prep that ramps up as the exam gets close, and the growth habits fitted around fixed events. Every quest comes with a step-by-step checklist; the MechE topic's checklist is a mini-lesson. The 10pm scoreboard previews tomorrow. See `plan/PLANNER.md`.
 - **Morning lock-in**: the first tap of the day commits you to today's list (+20 XP).
 - **Nudge ladder** when a quest is due and you haven't started, every 10 min:
   1. "Just 5 minutes. Tap."
@@ -28,22 +28,28 @@ tap start · ↑ done · ↓ snooze        LV 4 · streak 6
   3. The coach gets spicy (hype man / drill sergeant / disappointed robot).
   4. A final warning at 30 minutes late, then the nudges slow down but don't stop.
 - **5-minute trap**: tap starts a 5-min timer. When it ends you roll straight into focus. Check-ins every 20 min ("still locked in?" tap = yes) build a combo. Ignore one for 5 min and focus pauses and the nudges start again.
-- **K.O.**: swipe up when it's done, or the boss dies when focus reaches the block length. XP = 50 + focus minutes + 10 per combo + 25 if you didn't dodge.
+- **K.O.**: tap Done (or tick the last step), or the boss dies when focus reaches the block length. XP = 50 + focus minutes + 10 per combo + 25 if you didn't dodge.
 - **Doomscroll catch** (after calibration): head tilted down for 15 min while a quest is due gets called out.
 - **Scoreboard** at 10pm. **Saturdays are off**: no nudges and the streak is safe.
 
 ## Controls
 
-| | Kick | Music |
-|---|---|---|
-| Tap | Start / check in / lock in | Play / pause |
-| Swipe up | K.O. (done) | Next track |
-| Swipe down | Snooze 10 min / pause focus | Previous track |
-| Long press | Play / pause | Play / pause |
-| Double tap | Menu: Kick, Music, Quests, Scoreboard, Exit | |
+Everything on the glasses is an on-screen button. Gestures never complete or remove a task.
 
-The **Music** screen shows the album art (dithered to the glasses' 16 greens) and synced lyrics from
-LRCLIB when available; otherwise track, album and up next.
+| Gesture | Does |
+|---|---|
+| Swipe up / down | Move the highlight |
+| Tap | Press the highlighted button |
+| Double tap | Back (on Today: exit) |
+
+**Today** is your checklist: the next thing to do is the first button, then every quest for the day
+(□ to do, ◆ due, ▶ in progress, ■ done), then Music, Scoreboard and Exit.
+Tap a quest to open it: **Start** (springs the 5-minute trap), tick off its **steps** (the next unticked
+step is always on top, so tap-tap-tap walks you through), **Done**, **Snooze 10**, **Pause**, or **Skip**
+(asks first). **Undo** puts anything back.
+
+**Music** has Play/Pause, Skip and Previous buttons, the album art (dithered to 16 greens) and synced
+lyrics from LRCLIB when a synced version exists.
 
 ## Setup (about 15 minutes)
 
@@ -122,6 +128,7 @@ Testing aids: `?demo` spawns the test boss, `?mockspotify` fakes a playing track
 | `src/art.ts` | Album art: crop, greyscale, dither, PNG |
 | `plan/PLANNER.md` | Instructions for the daily planner run |
 | `tools/publish_plan.py` | Validates and encrypts a plan into `plan/plan.json` |
+| `tools/read_plan.py` | Decrypts the current plan (used by the midday re-plan) |
 | `src/imu.ts` | Head pose from the G2 IMU (calibrated, axis-agnostic) |
 | `src/ui.ts` | Phone-side settings page |
 | `src/main.ts` | Wiring, input routing, lifecycle |

@@ -20,7 +20,15 @@ Two databases (properties: `Name`, `Date`, `Tags`):
 ## 2. Plan today and tomorrow
 
 Output both days, using the date keys `YYYY-MM-DD` in America/Indiana/Indianapolis time.
-If the run happens after 12:00, only plan the rest of today (nothing in the past) plus tomorrow.
+If tomorrow is Saturday, also plan Sunday.
+
+### Midday re-plan (any run after 12:00)
+
+First read what's already published: `HQ_PLAN_KEY=... python3 tools/read_plan.py`.
+HQ keeps anything he already started or finished, matched by **exact title**, so:
+- Keep every quest whose time has passed exactly as it is (same title, time, minutes).
+- Keep upcoming quests unchanged unless Notion changed. Never rename a quest that's staying.
+- Add new Notion items, drop ones that are now DONE, and move unstarted ones only to times at least 15 min from now.
 
 **Saturday is his day off for friends.** No quests on Saturday unless something is due Saturday or by Sunday 12:00. Then plan at most one 60-min block and say so in the brief.
 
@@ -44,20 +52,28 @@ Nicolov can list classes, tutoring and team meetings here and future runs will p
 ## 3. Write each quest
 
 ```json
-{ "title": "PHYS 272 exam prep", "step": "Do problem 1 of last year's Exam 2", "time": "19:30", "minutes": 90, "kind": "exam", "note": "Exam Mon 11/16" }
+{
+  "title": "PHYS 272 exam prep", "step": "Open practice Exam 2, do problem 1", "time": "19:30", "minutes": 90,
+  "kind": "exam", "note": "Exam Mon 11/16",
+  "checklist": ["Open practice Exam 2, do #1", "Do the next 2 problems, timed", "Check against the solutions", "Write the 3 formulas you missed", "Redo the hardest one"]
+}
 ```
 
 - `title` ≤ 28 characters, plain ASCII (the glasses font has no emoji).
 - `step` is the **tiniest physical first action**, under 2 minutes, ≤ 60 characters. Good: "Open the PDF and read problem 1". Bad: "Study chapter 5".
 - `time` is 24-hour `HH:MM`. `minutes` 5-240.
+- `checklist` **always**: 3-6 concrete, in-order steps, each ≤ 36 characters. The first one is the tiny step. These are the buttons he taps through on the glasses, so each must be a clear physical action ("Draw the FBD for problem 1", "Submit on Gradescope"), never vague ("Work on it").
+- For the **MechE topic**, the checklist is a mini-lesson he reads on the glasses: the tiny start, then 2-3 key facts as short statements (e.g. "MMC = most material (smallest hole)"), then "Work one example", then "Explain it out loud in 60 s".
 
-Each day also gets a `brief`: ≤ 140 characters, direct and motivating, naming the single most important thing. For example: "Exam 2 is Monday. Tonight is E&M problems, then the gym clears your head."
+Each day also gets:
+- `brief`: ≤ 140 characters, direct and motivating, naming the single most important thing. For example: "Exam 2 is Monday. Tonight is E&M problems, then the gym clears your head."
+- `tomorrow`: ≤ 120 characters, shown with the 22:00 scoreboard. A heads-up about the next day ("Saturday off. Sunday is a full PHYS 272 practice exam.").
 
 ## 4. Publish
 
 ```bash
 cat > /tmp/plan.json <<'JSON'
-{ "v": 1, "generatedAt": "<ISO timestamp with offset>", "days": { "<today>": { "brief": "...", "quests": [ ... ] }, "<tomorrow>": { ... } } }
+{ "v": 1, "generatedAt": "<ISO timestamp with offset>", "days": { "<today>": { "brief": "...", "tomorrow": "...", "quests": [ ... ] }, "<tomorrow>": { ... } } }
 JSON
 HQ_PLAN_KEY="$HQ_PLAN_KEY" python3 tools/publish_plan.py /tmp/plan.json
 git add plan/plan.json

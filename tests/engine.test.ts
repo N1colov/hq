@@ -132,3 +132,28 @@ test('saturday is off: no nudges', () => {
   const n = tick(s, at(19, 0, 14))
   assert.equal(n.length, 0)
 })
+
+test('checklist steps start the trap, finishing all of them is a K.O., undo restores', () => {
+  const s = fresh()
+  s.quests[0].checklist = ['a', 'b', 'c']
+  tick(s, at(19, 0))
+  act(s, at(19, 1), { type: 'step', questId: 'thermo', index: 0 })
+  const run = today(s, at(19, 1)).runs.thermo
+  assert.equal(run.status, 'trap', 'ticking a step springs the trap')
+  act(s, at(19, 20), { type: 'step', questId: 'thermo', index: 1 })
+  act(s, at(19, 30), { type: 'step', questId: 'thermo', index: 2 })
+  assert.equal(run.status, 'done')
+  const xp = s.profile.xp
+  assert.ok(act(s, at(19, 31), { type: 'reopen', questId: 'thermo' }))
+  assert.equal(run.status, 'due')
+  assert.ok(s.profile.xp < xp, 'K.O. XP taken back')
+})
+
+test('skip is reversible', () => {
+  const s = fresh()
+  tick(s, at(19, 0))
+  act(s, at(19, 1), { type: 'skip', questId: 'thermo' })
+  assert.equal(today(s, at(19, 1)).runs.thermo.status, 'skipped')
+  act(s, at(19, 2), { type: 'reopen', questId: 'thermo' })
+  assert.equal(today(s, at(19, 2)).runs.thermo.status, 'due')
+})

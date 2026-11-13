@@ -1,7 +1,7 @@
 // Kick: the nudge engine. Pure logic over AppState + a timestamp, so it can be
 // unit-tested with a fake clock. Rendering and delivery live elsewhere.
 import { line } from './coach'
-import { topicFor } from './meche'
+import { topicChecklist, topicFor } from './meche'
 import type { AppState, DayLog, Nudge, Quest, QuestRun, Settings } from './types'
 
 export const MIN = 60_000
@@ -74,14 +74,14 @@ export function questsForDay(s: AppState, key: string): Quest[] {
     .sort((a, b) => a.time.localeCompare(b.time))
 }
 
-/** Display title/step for a quest on a given day (handles the rotating MechE topic). */
-export function questLabel(q: Quest | undefined, key: string): { title: string; step: string } {
-  if (!q) return { title: 'Quest', step: '' }
+/** Display title/step/checklist for a quest on a given day (handles the rotating MechE topic). */
+export function questLabel(q: Quest | undefined, key: string): { title: string; step: string; checklist: string[] } {
+  if (!q) return { title: 'Quest', step: '', checklist: [] }
   if (q.rotate === 'meche') {
     const t = topicFor(key)
-    return { title: `MechE: ${t.title}`, step: t.step }
+    return { title: `MechE: ${t.title}`, step: t.step, checklist: topicChecklist(t) }
   }
-  return { title: q.title, step: q.step }
+  return { title: q.title, step: q.step, checklist: (q.checklist ?? []).filter(Boolean).slice(0, 8) }
 }
 
 function newRun(q: Quest, dueAt: number): QuestRun {
@@ -127,7 +127,8 @@ export function ensureDay(s: AppState, now: number): void {
   }
   // Drop runs for quests that were deleted/deactivated, unless they were played.
   for (const [id, run] of Object.entries(day.runs)) {
-    if (!ids.has(id) && (run.status === 'waiting' || run.status === 'due')) delete day.runs[id]
+    const exists = s.quests.some(q => q.id === id)
+    if ((!ids.has(id) && (run.status === 'waiting' || run.status === 'due')) || (!exists && run.status !== 'done')) delete day.runs[id]
   }
   // Prune history.
   const cutoff = addDays(key, -KEEP_DAYS)
@@ -245,8 +246,8 @@ export interface TickContext {
   headDownMs: number
 }
 
-function toast(s: AppState, now: number, text: string, ms = TOAST_MS): void {
-  s.toast = { text, until: now + ms }
+function toast(s: AppState, now: number, text: string, ms = TOAST_MS, questId?: string): void {
+  s.toast = { text, until: now + ms, questId }
 }
 
 function minsLate(run: QuestRun, now: number): number {
@@ -292,7 +293,7 @@ export function tick(s: AppState, now: number, ctx: TickContext = { headDownMs: 
         const text = line(st.persona, key, { ...vars, m: late }, idx + q.id.length)
         run.lastLine = text
         out.push({ kind: 'nudge', questId: q.id, title: `HQ: ${title}`, text, priority: Math.min(5, 3 + idx) })
-        toast(s, now, text, 20_000)
+        toast(s, now, text, 20_000, q.id)
         run.level += 1
         run.lastNudgeAt = now
         run.nextNudgeAt = now + (idx >= 3 ? every * 1.5 : every)
@@ -306,7 +307,7 @@ export function tick(s: AppState, now: number, ctx: TickContext = { headDownMs: 
           const text = line(st.persona, 'doom', { ...vars, m: st.doomscrollMinutes }, run.dodges)
           run.lastLine = text
           out.push({ kind: 'doomscroll', questId: q.id, title: `HQ: ${title}`, text, priority: 4 })
-          toast(s, now, text, 20_000)
+          toast(s, now, text, 20_000, q.id)
         }
       }
       continue
@@ -320,7 +321,7 @@ export function tick(s: AppState, now: number, ctx: TickContext = { headDownMs: 
       const text = line(st.persona, 'trapDone', vars, run.combo)
       run.lastLine = text
       out.push({ kind: 'trapdone', questId: q.id, title: `HQ: ${title}`, text, priority: 3 })
-      toast(s, now, text)
+      toast(s, now, text, TOAST_MS, q.id)
     }
 
     if (run.status === 'focus') {
@@ -336,7 +337,7 @@ export function tick(s: AppState, now: number, ctx: TickContext = { headDownMs: 
           const text = line(st.persona, 'checkin', vars, run.combo)
           run.lastLine = text
           out.push({ kind: 'checkin', questId: q.id, title: `HQ: ${title}`, text, priority: 3 })
-          toast(s, now, text, st.checkinGraceMin * MIN)
+          toast(s, now, text, st.checkinGraceMin * MIN, q.id)
         } else if (run.checkinPendingSince && now - run.checkinPendingSince >= st.checkinGraceMin * MIN) {
           // No answer: stop counting focus from the moment we asked.
           stopFocus(run, run.checkinPendingSince)
@@ -346,7 +347,7 @@ export function tick(s: AppState, now: number, ctx: TickContext = { headDownMs: 
           const text = line(st.persona, 'paused', vars, run.combo)
           run.lastLine = text
           out.push({ kind: 'paused', questId: q.id, title: `HQ: ${title}`, text, priority: 4 })
-          toast(s, now, text, 20_000)
+          toast(s, now, text, 20_000, q.id)
         }
       }
     }
@@ -392,6 +393,7 @@ function finish(s: AppState, run: QuestRun, now: number): void {
   const real = focusMin >= s.settings.trapMinutes
   const xp = (real ? 50 : 10) + focusMin + run.combo * 10 + (real && run.dodges === 0 && run.level <= 1 ? 25 : 0)
   award(s, run, now, xp)
+  run.koXp = xp
   s.profile.totalKOs += 1
   const day = today(s, now)
   if (day.pinnedId === run.questId) day.pinnedId = undefined
@@ -420,9 +422,13 @@ export function startTrap(s: AppState, run: QuestRun, now: number): void {
 export type Action =
   | { type: 'primary' }
   | { type: 'done'; questId?: string }
-  | { type: 'snooze' }
+  | { type: 'snooze'; questId?: string }
+  | { type: 'pause'; questId: string }
   | { type: 'start'; questId: string }
   | { type: 'skip'; questId: string }
+  | { type: 'reopen'; questId: string }
+  | { type: 'checkin'; questId: string }
+  | { type: 'step'; questId: string; index: number }
   | { type: 'pin'; questId: string }
   | { type: 'lockin' }
 
@@ -477,8 +483,9 @@ export function act(s: AppState, now: number, a: Action): boolean {
       finish(s, run, now)
       return true
     }
+    case 'pause':
     case 'snooze': {
-      const run = currentRun(s, now)
+      const run = a.questId ? day.runs[a.questId] : currentRun(s, now)
       if (!run) return false
       const q = questOf(s, run.questId)
       if (run.status === 'trap' || run.status === 'focus') {
@@ -507,10 +514,57 @@ export function act(s: AppState, now: number, a: Action): boolean {
     }
     case 'skip': {
       const run = day.runs[a.questId]
-      if (!run || run.status === 'done') return false
+      if (!run || run.status === 'done' || run.status === 'skipped') return false
       stopFocus(run, now)
       run.status = 'skipped'
       if (day.pinnedId === a.questId) day.pinnedId = undefined
+      toast(s, now, 'Skipped for today. No penalty, no XP.')
+      return true
+    }
+    case 'reopen': {
+      const run = day.runs[a.questId]
+      if (!run || (run.status !== 'done' && run.status !== 'skipped')) return false
+      if (run.status === 'done' && run.koXp) {
+        run.xp -= run.koXp
+        s.profile.xp = Math.max(0, s.profile.xp - run.koXp)
+        day.xp -= run.koXp
+        s.profile.totalKOs = Math.max(0, s.profile.totalKOs - 1)
+        run.koXp = undefined
+      }
+      run.status = now >= run.dueAt ? 'due' : 'waiting'
+      run.doneAt = undefined
+      run.level = Math.max(run.level, 1)
+      run.nextNudgeAt = now + st.escalateEveryMin * MIN
+      run.lastLine = 'Back on the list.'
+      toast(s, now, 'Undone. It is back on your list.')
+      return true
+    }
+    case 'checkin': {
+      const run = day.runs[a.questId]
+      if (!run || run.status !== 'focus' || !run.checkinPendingSince) return false
+      run.checkinPendingSince = undefined
+      run.combo += 1
+      run.nextCheckinAt = now + st.checkinEveryMin * MIN
+      award(s, run, now, 5 * run.combo)
+      run.lastLine = `Combo x${run.combo}. Keep swinging.`
+      toast(s, now, `Combo x${run.combo}! +${5 * run.combo} XP`)
+      return true
+    }
+    case 'step': {
+      const run = day.runs[a.questId]
+      if (!run || run.status === 'done' || run.status === 'skipped') return false
+      const list = questLabel(questOf(s, a.questId), day.date).checklist
+      if (a.index < 0 || a.index >= list.length) return false
+      const checks = (run.checks = Array.from({ length: list.length }, (_, i) => !!run.checks?.[i]))
+      checks[a.index] = !checks[a.index]
+      // Ticking a step means you've started: spring the trap if it isn't running yet.
+      if (checks[a.index] && (run.status === 'due' || run.status === 'waiting')) startTrap(s, run, now)
+      if (checks.every(Boolean)) {
+        finish(s, run, now)
+        return true
+      }
+      const left = checks.filter(c => !c).length
+      if (checks[a.index]) toast(s, now, `Nice. ${left} step${left === 1 ? '' : 's'} left.`)
       return true
     }
     case 'pin': {

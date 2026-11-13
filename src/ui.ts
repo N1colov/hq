@@ -178,14 +178,13 @@ export function mountUI(root: HTMLElement, app: UIApp) {
 
     <section class="card">
       <h2>Controls on the glasses</h2>
+      <p class="dim">Everything is an on-screen button. Gestures never complete or remove a task.</p>
       <table class="controls">
-        <tr><th></th><th>Kick</th><th>Music</th></tr>
-        <tr><td>Tap</td><td>Start / check in</td><td>Play / pause</td></tr>
-        <tr><td>Swipe up</td><td>K.O. (done)</td><td>Next track</td></tr>
-        <tr><td>Swipe down</td><td>Snooze 10 / pause</td><td>Previous</td></tr>
-        <tr><td>Long press</td><td>Play / pause</td><td>Play / pause</td></tr>
-        <tr><td>Double tap</td><td colspan="2">Menu (Kick, Music, Quests, Scoreboard, Exit)</td></tr>
+        <tr><td>Swipe up / down</td><td>Move the highlight</td></tr>
+        <tr><td>Tap</td><td>Press the highlighted button</td></tr>
+        <tr><td>Double tap</td><td>Back (on Today: exit)</td></tr>
       </table>
+      <p class="dim small">Today is your checklist. Tap a quest to open it: Start, tick off its steps, Done, Snooze, Pause or Skip (Skip asks first, and Undo puts anything back).</p>
     </section>
 
     <section class="card">
@@ -279,6 +278,7 @@ export function mountUI(root: HTMLElement, app: UIApp) {
         <h3>${isNew ? 'New quest' : 'Edit quest'}</h3>
         <label>Name<input id="f-title" type="text" maxlength="40" value="${esc(q.title)}" placeholder="Thermo HW"></label>
         <label>Tiny first step<input id="f-step" type="text" maxlength="70" value="${esc(q.step)}" placeholder="Open the PDF and read problem 1"></label>
+        <label>Checklist (one step per line, optional)<textarea id="f-check" rows="4" placeholder="Open the PDF&#10;Draw the FBD&#10;Solve 1-3&#10;Submit">${esc((q.checklist ?? []).join('\n'))}</textarea></label>
         <div class="grid2">
           <label>Start<input id="f-time" type="time" value="${esc(q.time)}"></label>
           <label>Block (min)<input id="f-min" type="number" min="5" max="480" value="${q.minutes}"></label>
@@ -307,6 +307,11 @@ export function mountUI(root: HTMLElement, app: UIApp) {
       ...editing,
       title: val('f-title') || 'Quest',
       step: val('f-step') || 'Just start',
+      checklist: (root.querySelector<HTMLTextAreaElement>('#f-check')?.value ?? '')
+        .split('\n')
+        .map(x => x.trim())
+        .filter(Boolean)
+        .slice(0, 8),
       time: val('f-time') || '09:00',
       minutes: Math.max(5, Number(val('f-min')) || 30),
       days,
@@ -341,6 +346,8 @@ export function mountUI(root: HTMLElement, app: UIApp) {
           if (r.status === 'trap' && r.trapEndsAt) extra = ` · ${fmtClock(r.trapEndsAt - now)} left`
           if (r.status === 'due') extra = ` · ${Math.floor((now - r.dueAt) / 60000)} min late`
           if (r.status === 'done') extra = ` · +${r.xp} XP`
+          const steps = q?.checklist?.length ? ` · ${(r.checks ?? []).filter(Boolean).length}/${q.checklist.length} steps` : ''
+          extra += steps
           return `
           <div class="run s-${r.status}">
             <div>
@@ -350,7 +357,7 @@ export function mountUI(root: HTMLElement, app: UIApp) {
             <div class="q-actions">
               ${startable ? `<button class="btn small" data-action="start" data-v="${r.questId}">Start</button>` : ''}
               ${open && !startable ? `<button class="btn small" data-action="done" data-v="${r.questId}">K.O.</button>` : ''}
-              ${open ? `<button class="btn small ghost" data-action="skip" data-v="${r.questId}">Skip</button>` : ''}
+              ${open ? `<button class="btn small ghost" data-action="skip" data-v="${r.questId}">Skip</button>` : `<button class="btn small ghost" data-action="reopen" data-v="${r.questId}">Undo</button>`}
             </div>
           </div>`
         })
@@ -532,6 +539,9 @@ export function mountUI(root: HTMLElement, app: UIApp) {
         break
       case 'skip':
         app.act({ type: 'skip', questId: v })
+        break
+      case 'reopen':
+        app.act({ type: 'reopen', questId: v })
         break
       case 'copy-topic':
         await copy(S().ntfyTopic, btn)
