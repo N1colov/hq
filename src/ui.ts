@@ -20,9 +20,10 @@ export interface UIApp {
   changed(): void
   replaceState(s: AppState): void
   testPush(): Promise<boolean>
-  testBuddyPush(): Promise<boolean>
   startCalibration(): Promise<void>
   connectSpotify(): Promise<void>
+  syncPlan(): Promise<void>
+  planStatus(): string
   demo(): void
   endCalibration(): Promise<void>
 }
@@ -86,8 +87,19 @@ export function mountUI(root: HTMLElement, app: UIApp) {
     </section>
 
     <section class="card">
+      <div class="row-head"><h2>Daily plan</h2><button class="btn small" data-action="plan-sync">Sync now</button></div>
+      <p class="dim">Every morning an AI planner reads your Notion (deadlines, exams, events), fits in the gym, exam prep, a MechE topic and internship apps around them, and sends the plan here. On planned days it replaces your built-in habits.</p>
+      <div id="planStatus" class="status-line"></div>
+      <div id="planBrief" class="brief"></div>
+      <details id="planSetup"><summary>Plan key</summary>
+        <label>Key (from your QR code or setup message)<input type="text" data-setting="planKey" autocomplete="off" spellcheck="false"></label>
+        <label>Plan file<input type="url" data-setting="planUrl"></label>
+      </details>
+    </section>
+
+    <section class="card">
       <div class="row-head"><h2>Quests</h2><div class="q-actions"><button class="btn small ghost" data-action="demo">Test drive</button><button class="btn small" data-action="new-quest">+ Add</button></div></div>
-      <p class="dim">Each quest is a boss. Its HP is the block length. Starting is the only hard part, so every quest has a tiny first step.</p>
+      <p class="dim">Each quest is a boss. Its HP is the block length. Starting is the only hard part, so every quest has a tiny first step. ★ = daily growth habit.</p>
       <div id="quests"></div>
       <div id="questForm"></div>
     </section>
@@ -124,18 +136,6 @@ export function mountUI(root: HTMLElement, app: UIApp) {
     </section>
 
     <section class="card">
-      <h2>Accountability buddy</h2>
-      <p class="dim">Optional. If you dodge a quest past the limit, you get a final warning, then your buddy gets a ping. Only add someone who said yes. They install ntfy and send you their topic.</p>
-      <div class="grid2">
-        <label>Your name<input type="text" data-setting="userName"></label>
-        <label>Buddy's name<input type="text" data-setting="buddyName"></label>
-        <label>Buddy's ntfy topic<input type="text" data-setting="buddyTopic" placeholder="leave empty to disable"></label>
-        <label>Ping after (min late)<input type="number" min="5" max="240" data-setting="buddyAfterMin"></label>
-      </div>
-      <div class="inline"><button class="btn ghost" data-action="test-buddy">Send buddy a test</button><span class="dim" id="buddyResult"></span></div>
-    </section>
-
-    <section class="card">
       <h2>Spotify</h2>
       <div id="spotifyStatus" class="status-line"></div>
       <details id="spotifySetup">
@@ -149,6 +149,8 @@ export function mountUI(root: HTMLElement, app: UIApp) {
         </ol>
       </details>
       <label>Client ID<input type="text" data-setting="spotifyClientId" autocomplete="off" spellcheck="false"></label>
+      <label class="switch"><input type="checkbox" data-setting="lyricsOnKick"> Show the current lyric under the song on the Kick screen</label>
+      <p class="dim small">Album art and synced lyrics show on the Music screen. Lyrics come from LRCLIB when a synced version exists.</p>
       <div class="inline">
         <button class="btn" data-action="spotify-connect">Connect Spotify</button>
         <button class="btn ghost" data-action="spotify-disconnect">Disconnect</button>
@@ -252,9 +254,9 @@ export function mountUI(root: HTMLElement, app: UIApp) {
             q => `
         <div class="quest ${q.active ? '' : 'off'}">
           <div class="q-main">
-            <div class="q-title">${esc(q.title)}</div>
-            <div class="dim small">${fmtHM(q.time)} · ${q.minutes} min · ${esc(daysText(q))}</div>
-            <div class="small step">▶ ${esc(q.step)}</div>
+            <div class="q-title">${q.category === 'growth' ? '★ ' : ''}${esc(q.rotate === 'meche' ? 'MechE topic of the day' : q.title)}${q.source === 'plan' ? ' <span class="tag">AI plan</span>' : ''}</div>
+            <div class="dim small">${fmtHM(q.time)} · ${q.minutes} min · ${esc(daysText(q))}${q.note ? ` · ${esc(q.note)}` : ''}</div>
+            <div class="small step">▶ ${esc(q.rotate === 'meche' ? 'A new core topic each day' : q.step)}</div>
           </div>
           <div class="q-actions">
             <button class="btn small ghost" data-action="edit-quest" data-v="${q.id}">Edit</button>
@@ -286,6 +288,7 @@ export function mountUI(root: HTMLElement, app: UIApp) {
           (d, i) => `<button class="day ${q.days.includes(i) ? 'on' : ''}" data-action="f-day" data-v="${i}">${d}</button>`,
         ).join('')}</div>
         <label id="f-once-wrap" class="${q.days.length ? 'hidden' : ''}">One-off date<input id="f-once" type="date" value="${esc(q.once ?? today(app.state, Date.now()).date)}"></label>
+        <label class="switch"><input id="f-growth" type="checkbox" ${q.category === 'growth' ? 'checked' : ''}> Growth habit (the AI plan replaces it on days it plans)</label>
         <label class="switch"><input id="f-active" type="checkbox" ${q.active ? 'checked' : ''}> Active</label>
         <div class="inline">
           <button class="btn" data-action="save-quest">Save</button>
@@ -308,6 +311,8 @@ export function mountUI(root: HTMLElement, app: UIApp) {
       minutes: Math.max(5, Number(val('f-min')) || 30),
       days,
       once: days.length ? undefined : val('f-once'),
+      category: root.querySelector<HTMLInputElement>('#f-growth')?.checked ? 'growth' : editing.category === 'growth' ? 'task' : editing.category,
+      source: 'manual',
       active: root.querySelector<HTMLInputElement>('#f-active')?.checked ?? true,
     }
   }
@@ -372,6 +377,24 @@ export function mountUI(root: HTMLElement, app: UIApp) {
     else html = `<span class="dot ok"></span> ${v.playing ? 'Playing' : 'Paused'}: <b>${esc(v.title)}</b> · ${esc(v.artist)} <span class="dim">(${fmtClock(v.progressMs)} / ${fmtClock(v.durationMs)})</span>`
     $('spotifyStatus').innerHTML = html
     ;($('spotifySetup') as HTMLDetailsElement).open ||= !v.hasClientId
+  }
+
+  function renderPlan(): void {
+    const p = app.state.plan
+    const todayKey = today(app.state, Date.now()).date
+    const hasKey = !!S().planKey.trim()
+    let html: string
+    if (!hasKey) html = '<span class="dot"></span> Not set up. Scan your HQ setup QR or paste your plan key.'
+    else if (p.error) html = `<span class="dot warn"></span> ${esc(p.error)}`
+    else if (p.syncedAt) {
+      const t = new Date(p.syncedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      const covered = p.dates.includes(todayKey) ? 'Today is planned.' : 'No plan for today yet.'
+      html = `<span class="dot ok"></span> Synced ${t}. ${covered}`
+    } else html = `<span class="dot"></span> ${esc(app.planStatus() || 'Waiting for first sync...')}`
+    $('planStatus').innerHTML = html
+    const brief = p.briefs[todayKey]
+    $('planBrief').innerHTML = brief ? `<b>Today:</b> ${esc(brief)}` : ''
+    ;($('planSetup') as HTMLDetailsElement).open ||= !hasKey
   }
 
   function renderCal(): void {
@@ -447,6 +470,11 @@ export function mountUI(root: HTMLElement, app: UIApp) {
         refresh(true)
         break
       }
+      case 'plan-sync':
+        btn.textContent = 'Syncing...'
+        await app.syncPlan()
+        btn.textContent = 'Sync now'
+        break
       case 'demo':
         app.demo()
         renderQuests()
@@ -515,9 +543,6 @@ export function mountUI(root: HTMLElement, app: UIApp) {
         break
       case 'test-push':
         $('pushResult').textContent = (await app.testPush()) ? 'Sent. Check your glasses.' : 'Could not send (no topic?)'
-        break
-      case 'test-buddy':
-        $('buddyResult').textContent = S().buddyTopic ? ((await app.testBuddyPush()) ? 'Sent.' : 'Failed.') : 'Add their topic first.'
         break
       case 'copy-redirect':
         await copy(redirectUri(), btn)
@@ -602,6 +627,8 @@ export function mountUI(root: HTMLElement, app: UIApp) {
     tickN++
     renderChips()
     renderSpotify()
+    renderPlan()
+    if (force) renderQuests()
     if (calStep !== 3) renderCal()
     if (force || tickN % 2 === 0) renderToday()
     $('log').textContent = app.log.join('\n') || 'Nothing yet.'

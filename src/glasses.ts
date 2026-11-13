@@ -2,6 +2,8 @@
 // otherwise flicker-free in-place text updates for the boxes that changed.
 import {
   CreateStartUpPageContainer,
+  ImageContainerProperty,
+  ImageRawDataUpdate,
   ListContainerProperty,
   ListItemContainerProperty,
   RebuildPageContainer,
@@ -9,7 +11,17 @@ import {
   TextContainerUpgrade,
 } from '@evenrealities/even_hub_sdk'
 import { call, isReal } from './bridge'
-import { structureKey, type PageSpec, type TextBox } from './view'
+import { structureKey, type ImageBox, type PageSpec, type TextBox } from './view'
+
+/** Supplies PNG bytes for an image box (null = not ready yet). */
+export type ImageSource = (box: ImageBox) => Promise<Uint8Array | null>
+let imageSource: ImageSource = async () => null
+export function setImageSource(fn: ImageSource): void {
+  imageSource = fn
+}
+/** What each image container currently shows (cleared on rebuild). */
+const shownImage = new Map<string, string>()
+const retryAt = new Map<string, number>()
 
 let started = false
 let nextStartTry = 0
@@ -66,10 +78,22 @@ function toPayload(spec: PageSpec) {
         }),
       ]
     : undefined
+  const imageObject = (spec.images ?? []).map(
+    b =>
+      new ImageContainerProperty({
+        xPosition: b.x,
+        yPosition: b.y,
+        width: b.w,
+        height: b.h,
+        containerID: b.id,
+        containerName: b.name,
+      }),
+  )
   return {
-    containerTotalNum: textObject.length + (listObject?.length ?? 0),
+    containerTotalNum: textObject.length + (listObject?.length ?? 0) + imageObject.length,
     textObject,
     ...(listObject ? { listObject } : {}),
+    ...(imageObject.length ? { imageObject } : {}),
   }
 }
 
@@ -77,6 +101,7 @@ function toPayload(spec: PageSpec) {
 export function invalidate(): void {
   lastKey = ''
   lastText.clear()
+  shownImage.clear()
 }
 
 export async function render(spec: PageSpec): Promise<void> {
@@ -117,14 +142,18 @@ async function renderNow(spec: PageSpec): Promise<void> {
     if (!started) return
     lastKey = key
     lastText.clear()
+    shownImage.clear()
     spec.texts.forEach(b => lastText.set(b.name, b.text))
+    await pushImages(spec)
     return
   }
   if (key !== lastKey) {
     await call(b => b.rebuildPageContainer(new RebuildPageContainer(toPayload(spec))), false)
     lastKey = key
     lastText.clear()
+    shownImage.clear()
     spec.texts.forEach(b => lastText.set(b.name, b.text))
+    await pushImages(spec)
     return
   }
   for (const b of spec.texts) {
@@ -144,6 +173,28 @@ async function renderNow(spec: PageSpec): Promise<void> {
         ),
       false,
     )
+  }
+  await pushImages(spec)
+}
+
+/** Send image data for boxes whose source changed. Images are slow over BLE, so only on change. */
+async function pushImages(spec: PageSpec): Promise<void> {
+  for (const box of spec.images ?? []) {
+    if (shownImage.get(box.name) === box.src) continue
+    if ((retryAt.get(box.src) ?? 0) > Date.now()) continue
+    const bytes = await imageSource(box)
+    if (!bytes) continue
+    shownImage.set(box.name, box.src)
+    const res = await call(
+      b => b.updateImageRawData(new ImageRawDataUpdate({ containerID: box.id, containerName: box.name, imageData: bytes })),
+      'sendFailed' as never,
+      12_000,
+    )
+    if (String(res) !== 'success') {
+      console.warn('[hq] image update', res)
+      shownImage.delete(box.name)
+      retryAt.set(box.src, Date.now() + 30_000)
+    }
   }
 }
 

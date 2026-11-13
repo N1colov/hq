@@ -16,7 +16,6 @@ export type LineKey =
   | 'doom'
   | 'lockin'
   | 'allclear'
-  | 'buddy'
 
 type Lines = Record<LineKey, string[]>
 
@@ -37,7 +36,7 @@ const hype: Lines = {
     "You're better than this scroll. {t}. Now.",
   ],
   final: [
-    'Last call before {b} hears about this.',
+    "{m} min. Future you is watching. Don't let them down.",
     '{m} min. One tap and nobody has to know.',
   ],
   snooze: ["Ten minutes. I'm coming back.", 'Fine. 10 min. Boss gets stronger though.'],
@@ -49,7 +48,6 @@ const hype: Lines = {
   doom: ['{m} min looking down. {t} is still waiting.', 'Phone down. {t} up.'],
   lockin: ["Locked in. Let's get it."],
   allclear: ['All clear. Go live a little.'],
-  buddy: ['{n} has been dodging {t} for {m} min. Hype them up.'],
 }
 
 const drill: Lines = {
@@ -60,7 +58,7 @@ const drill: Lines = {
     '{t} is still standing. Fix that.',
     'Did I say scroll? I said {t}.',
   ],
-  final: ['Final warning. {b} gets the report next.', '{m} minutes AWOL. Last chance.'],
+  final: ['Final warning. {m} minutes AWOL.', '{m} minutes AWOL. Last chance, recruit.'],
   snooze: ['Ten minutes. Then no more excuses.', 'Granted. Boss levels up. Your call.'],
   trapStart: ["Clock's running. {k} minutes. Execute."],
   trapDone: ["{k} down. Don't you dare stop now."],
@@ -70,7 +68,6 @@ const drill: Lines = {
   doom: ['Eyes up, recruit. {m} min on the phone.'],
   lockin: ['Orders received. Execute.'],
   allclear: ['At ease. Nothing left today.'],
-  buddy: ['{n} has gone AWOL on {t} for {m} min. Report in.'],
 }
 
 const robot: Lines = {
@@ -88,8 +85,8 @@ const robot: Lines = {
     'I calculated your odds of starting. Prove me wrong.',
   ],
   final: [
-    'Notifying {b} shortly. I am sure they will be thrilled.',
-    "I'll let {b} know you are 'resting'.",
+    '{m} minutes. I am writing this down in your permanent record.',
+    "I'll log this as 'resting'. For {m} minutes.",
   ],
   snooze: ['Snooze accepted. Disappointment recorded.', '10 minutes granted. The boss thanks you.'],
   trapStart: ['{k} minute test initiated. Try not to fail.'],
@@ -100,7 +97,6 @@ const robot: Lines = {
   doom: ['Detected {m} minutes of downward gaze. Phone, I presume.'],
   lockin: ['Commitment logged. I will remember this.'],
   allclear: ['No tasks remain. Enjoy your unsupervised time.'],
-  buddy: ['{n} has avoided {t} for {m} min. Intervention suggested.'],
 }
 
 const PERSONAS: Record<Persona, Lines> = { hype, drill, robot }
@@ -115,7 +111,6 @@ export interface LineVars {
   t?: string
   s?: string
   m?: number
-  b?: string
   x?: number
   n?: string
   /** trap minutes */
@@ -130,7 +125,6 @@ export function line(persona: Persona, key: LineKey, vars: LineVars, seed = 0): 
     .replace(/\{t\}/g, vars.t ?? 'it')
     .replace(/\{s\}/g, lowerFirst(vars.s ?? 'start'))
     .replace(/\{m\}/g, String(vars.m ?? 0))
-    .replace(/\{b\}/g, vars.b || 'your buddy')
     .replace(/\{x\}/g, String(vars.x ?? 0))
     .replace(/\{n\}/g, vars.n || 'Your friend')
     .replace(/\{k\}/g, String(vars.k ?? 5))

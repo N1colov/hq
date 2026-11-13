@@ -1,7 +1,8 @@
 # HQ for Even G2
 
 One app you open once and leave open. The top of the display is a DisplayPlus-style Spotify
-bar; the rest is **Kick**, a nudge engine that makes starting stupid easy and ignoring it annoying.
+bar (song, time, and the current lyric line); the rest is **Kick**, a nudge engine that makes starting
+stupid easy and ignoring it annoying. Every morning an AI planner reads your Notion and plans the day.
 
 ```
 Slowtown - twenty one pilots    ( 0:45 - 4:57 )
@@ -17,13 +18,15 @@ tap start · ↑ done · ↓ snooze        LV 4 · streak 6
 
 ## How Kick works
 
-- **Quests** are your time blocks (Thermo HW at 7pm, Sun to Thu, 60 min). Each one is a boss whose HP is the block length.
+- **Quests** are your time blocks. Each one is a boss whose HP is the block length.
+- **Growth habits (★)** come built in: train (gym / tri), exam prep, internship apps, and a **MechE topic of the day** that rotates through 32 core topics (Mohr's circle, GD&T, gear trains, PID, Rankine...).
+- **Daily AI plan**: every morning a scheduled Claude run reads your Notion Schedule and Life Schedule, then plans today and tomorrow: blocks for anything due, exam prep that ramps up as the exam gets close, and the growth habits fitted around fixed events. See `plan/PLANNER.md`.
 - **Morning lock-in**: the first tap of the day commits you to today's list (+20 XP).
 - **Nudge ladder** when a quest is due and you haven't started, every 10 min:
   1. "Just 5 minutes. Tap."
   2. The tiny first step you wrote ("Open the PDF").
   3. The coach gets spicy (hype man / drill sergeant / disappointed robot).
-  4. Final warning, then your accountability buddy gets a ping (optional, opt-in).
+  4. A final warning at 30 minutes late, then the nudges slow down but don't stop.
 - **5-minute trap**: tap starts a 5-min timer. When it ends you roll straight into focus. Check-ins every 20 min ("still locked in?" tap = yes) build a combo. Ignore one for 5 min and focus pauses and the nudges start again.
 - **K.O.**: swipe up when it's done, or the boss dies when focus reaches the block length. XP = 50 + focus minutes + 10 per combo + 25 if you didn't dodge.
 - **Doomscroll catch** (after calibration): head tilted down for 15 min while a quest is due gets called out.
@@ -38,6 +41,9 @@ tap start · ↑ done · ↓ snooze        LV 4 · streak 6
 | Swipe down | Snooze 10 min / pause focus | Previous track |
 | Long press | Play / pause | Play / pause |
 | Double tap | Menu: Kick, Music, Quests, Scoreboard, Exit | |
+
+The **Music** screen shows the album art (dithered to the glasses' 16 greens) and synced lyrics from
+LRCLIB when available; otherwise track, album and up next.
 
 ## Setup (about 15 minutes)
 
@@ -68,9 +74,15 @@ HQ shows up in your glasses menu. Open it on the phone to see the settings page 
 2. Even Realities app → **Notifications** → enable **ntfy**.
 3. Tap **Send test** in HQ.
 
-### 5. Optional
+### 5. Daily plan from Notion
 
-- **Buddy**: they install ntfy, subscribe to a topic of their own, and you paste that topic into HQ.
+The plan is encrypted with a key only HQ and the planner know (the repo is public).
+Scan the **setup QR** you were sent (it carries the key) or paste the key under **Daily plan → Plan key**.
+The planner is a scheduled task in your Claude account that runs each morning and follows `plan/PLANNER.md`.
+Add your class times to that file so it plans around them.
+
+### 6. Optional
+
 - **Head tracking**: tap **Calibrate**, look ahead, then look at your phone. That enables the doomscroll catch and the double-nod.
 - **Test drive**: spawns a 10-minute boss that's due right now so you can try the whole loop.
 
@@ -90,7 +102,7 @@ npm run dev         # http://<your-ip>:5173, then: npx evenhub qr --url http://<
 npx @evenrealities/evenhub-simulator http://localhost:5173   # desktop simulator
 ```
 
-Testing aids: `?demo` spawns the test boss, `?mockspotify` fakes a playing track, `?trap=0.25&checkin=0.5` shortens timers.
+Testing aids: `?demo` spawns the test boss, `?mockspotify` fakes a playing track with placeholder lyric lines, `?trap=0.25&checkin=0.5` shortens timers.
 
 `npm run pack` builds an `hq.ehpk` for Even Hub submission. Spotify login in a packaged build will need the redirect pointed at a hosted page, so stick with the GitHub Pages route for now.
 
@@ -104,6 +116,12 @@ Testing aids: `?demo` spawns the test boss, `?mockspotify` fakes a playing track
 | `src/glasses.ts` | Renderer: rebuild on layout change, in-place text updates otherwise |
 | `src/spotify.ts` | PKCE login, now playing, controls |
 | `src/notify.ts` | ntfy pushes |
+| `src/plan.ts` | Fetch, decrypt and merge the daily AI plan |
+| `src/meche.ts` | MechE topic-of-the-day list |
+| `src/lyrics.ts` | LRCLIB synced-lyrics client |
+| `src/art.ts` | Album art: crop, greyscale, dither, PNG |
+| `plan/PLANNER.md` | Instructions for the daily planner run |
+| `tools/publish_plan.py` | Validates and encrypts a plan into `plan/plan.json` |
 | `src/imu.ts` | Head pose from the G2 IMU (calibrated, axis-agnostic) |
 | `src/ui.ts` | Phone-side settings page |
 | `src/main.ts` | Wiring, input routing, lifecycle |

@@ -3,21 +3,26 @@
   "edition": "202601",
   "name": "HQ",
   "author": "Nicolov",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
   "tagline": "Gets you off the couch, plays your music",
-  "description": "Kick nudge engine (quests, 5-minute trap, escalating coach, streaks) with a DisplayPlus-style Spotify bar.",
+  "description": "Kick nudge engine (quests, 5-minute trap, escalating coach, streaks), daily AI plan from Notion, and a DisplayPlus-style Spotify view with album art and synced lyrics.",
   "permissions": [
     {
       "name": "network",
-      "desc": "Spotify now-playing and controls, and phone notifications through ntfy.",
+      "desc": "Spotify now-playing and controls, album art, synced lyrics (LRCLIB), your encrypted daily plan, and phone notifications through ntfy.",
       "whitelist": [
         "https://accounts.spotify.com",
         "https://api.spotify.com",
+        "https://i.scdn.co",
+        "https://lrclib.net",
+        "https://raw.githubusercontent.com",
         "https://ntfy.sh"
       ]
     }
   ],
-  "supported_languages": ["en"]
+  "supported_languages": [
+    "en"
+  ]
 }

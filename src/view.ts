@@ -10,6 +10,7 @@ import {
   hpFrac,
   needsLockIn,
   playerLevel,
+  questLabel,
   questOf,
   summary,
   today,
@@ -46,13 +47,32 @@ export interface ListBox {
   items: string[]
 }
 
+export interface ImageBox {
+  id: number
+  name: string
+  x: number
+  y: number
+  w: number
+  h: number
+  /** What should be drawn (cache key, e.g. album art URL). */
+  src: string
+}
+
 export interface PageSpec {
   page: PageKey
   texts: TextBox[]
   list?: ListBox
+  images?: ImageBox[]
 }
 
 export interface MusicView {
+  trackId?: string
+  album?: string
+  artUrl?: string
+  /** Current lyric line (synced), if available. */
+  lyric?: string
+  /** Next lyric lines, for the music page. */
+  lyricNext?: string[]
   connected: boolean
   hasClientId: boolean
   playing: boolean
@@ -172,7 +192,7 @@ export function kickCard(s: AppState, now: number): KickCard {
     const left = st.checkinGraceMin * 60_000 - (now - run.checkinPendingSince)
     return {
       card: card([
-        row(`◆ ${(q?.title ?? '').toUpperCase()}`, `x${run.combo} COMBO`),
+        row(`◆ ${questLabel(q, day.date).title.toUpperCase()}`, `x${run.combo} COMBO`),
         '',
         center('STILL LOCKED IN?'),
         center('tap = yes'),
@@ -185,12 +205,19 @@ export function kickCard(s: AppState, now: number): KickCard {
 
   if (needsLockIn(s, now) && (!run || run.status === 'waiting')) {
     const runs = Object.values(day.runs).sort((a, b) => a.dueAt - b.dueAt)
-    const rows = runs.slice(0, CARD_LINES - 2).map(r => {
+    const brief = s.plan?.briefs?.[day.date]
+    const rows = runs.slice(0, CARD_LINES - (brief ? 3 : 2)).map(r => {
       const q = questOf(s, r.questId)
-      return row(`○ ${fmtHM(q?.time ?? '')}   ${q?.title ?? ''}`, `${q?.minutes} min`)
+      return row(`○ ${fmtHM(q?.time ?? '')}   ${questLabel(q, day.date).title}`, `${q?.minutes} min`)
     })
+    const more = runs.length > rows.length ? ` (+${runs.length - rows.length} more)` : ''
     return {
-      card: card([`TODAY: ${runs.length} QUEST${runs.length === 1 ? '' : 'S'}`, ...rows, center('tap = lock in   (+20 XP)')]),
+      card: card([
+        `TODAY: ${runs.length} QUEST${runs.length === 1 ? '' : 'S'}${more}`,
+        ...(brief ? [fit(brief, CARD_W)] : []),
+        ...rows,
+        center('tap = lock in   (+20 XP)'),
+      ]),
       hint: 'tap lock in · 2x menu',
     }
   }
@@ -210,14 +237,15 @@ export function kickCard(s: AppState, now: number): KickCard {
   }
 
   const q = questOf(s, run.questId)
-  const title = (q?.title ?? 'Quest').toUpperCase()
-  const step = q?.step ? fit(`▶ ${q.step}`, CARD_W) : ''
+  const label = questLabel(q, day.date)
+  const title = label.title.toUpperCase()
+  const step = label.step ? fit(`▶ ${label.step}`, CARD_W) : ''
 
   if (run.status === 'waiting') {
     return {
       card: card([
         row(`○ NEXT: ${title}`, `in ${fmtClock(run.dueAt - now)}`),
-        `${fmtHM(q?.time ?? '')} · ${q?.minutes} min block`,
+        fit(`${fmtHM(q?.time ?? '')} · ${q?.minutes} min block${q?.note ? ` · ${q.note}` : ''}`, CARD_W),
         '',
         { flex: toastOr(s, now, step) },
       ]),
@@ -234,7 +262,7 @@ export function kickCard(s: AppState, now: number): KickCard {
         { flex: toastOr(s, now, run.lastLine ?? '') },
         '',
         step,
-        `waiting ${late} min${run.dodges ? ` · dodged ${run.dodges}x` : ''}`,
+        fit(`waiting ${late} min${run.dodges ? ` · dodged ${run.dodges}x` : ''}${q?.note ? ` · ${q.note}` : ''}`, CARD_W),
       ]),
       hint: 'tap start · ↑ done · ↓ snooze',
     }
@@ -301,7 +329,7 @@ export function questItems(s: AppState, now: number): string[] {
   const tag: Record<string, string> = { waiting: '', due: 'DUE', trap: 'TRAP', focus: 'LOCKED IN', done: 'K.O.', skipped: 'skipped' }
   return runs.slice(0, 20).map(r => {
     const q = questOf(s, r.questId)
-    return fit(row(`${icon[r.status]} ${fmtHM(q?.time ?? '')}   ${q?.title ?? '?'}`, tag[r.status], LIST_W), LIST_W).slice(0, 63)
+    return fit(row(`${icon[r.status]} ${fmtHM(q?.time ?? '')}   ${questLabel(q, day.date).title}`, tag[r.status], LIST_W), LIST_W).slice(0, 63)
   })
 }
 
@@ -314,11 +342,45 @@ export function questIdAt(s: AppState, now: number, index: number): string | und
 
 const W = 576
 
-function topBoxes(m: MusicView): TextBox[] {
+function topBoxes(m: MusicView, lyricLine: boolean): TextBox[] {
+  // Like DisplayPlus: the current lyric sits under the song when available.
+  const second = lyricLine && m.lyric ? fit(`  ${m.lyric}`, W - 4) : musicBar(m)
   return [
     { id: 1, name: 'music', x: 0, y: 0, w: W, h: 34, text: musicLine(m) },
-    { id: 2, name: 'mbar', x: 0, y: 30, w: W, h: 30, text: musicBar(m), dim: 2 },
+    { id: 2, name: 'mbar', x: 0, y: 30, w: W, h: 30, text: second, dim: 2 },
   ]
+}
+
+/** Music page: album art on the left, lyrics (or track info) on the right. */
+export const ART = { x: 8, y: 72, size: 128 }
+const LYR_X = ART.x + ART.size + 12
+const LYR_W = W - LYR_X
+const LYR_INNER = LYR_W - 2 * 4
+
+function musicPanel(m: MusicView): string {
+  const lines: string[] = []
+  if (!m.connected) {
+    return clampLines('Set up Spotify in HQ on your phone (Spotify section).', 5, LYR_INNER)
+  }
+  if (!m.title) return 'Start something in Spotify.'
+  if (m.lyric !== undefined && m.lyricNext) {
+    // Current line in brackets, next lines indented (DisplayPlus style).
+    const cur = clampLines(`[ ${m.lyric || '...'} ]`, 2, LYR_INNER)
+    lines.push(cur)
+    let used = cur.split('\n').length + measureTextWrap(cur, LYR_INNER).lineCount - 1
+    for (const next of m.lyricNext) {
+      if (used >= 5) break
+      const l = clampLines(`   ${next}`, 1, LYR_INNER)
+      lines.push(l)
+      used += 1
+    }
+    return lines.join('\n')
+  }
+  lines.push(fit(m.title, LYR_INNER), fit(m.artist, LYR_INNER))
+  if (m.album) lines.push(fit(m.album, LYR_INNER))
+  lines.push('')
+  if (m.upNext) lines.push(fit(`UP NEXT  ${m.upNext}`, LYR_INNER))
+  return lines.join('\n')
 }
 
 export function buildPage(page: PageKey, s: AppState, m: MusicView, now: number): PageSpec {
@@ -337,21 +399,21 @@ export function buildPage(page: PageKey, s: AppState, m: MusicView, now: number)
       list: { id: 5, name: 'quests', x: 0, y: 40, w: W, h: 248, items: questItems(s, now) },
     }
   }
-  const card_ = card
   let cardText: string
   let hint: string
   if (page === 'music') {
-    const state = !m.connected ? 'NOT CONNECTED' : m.title ? (m.playing ? '▶ PLAYING' : '|| PAUSED') : 'IDLE'
-    cardText = card_([
-      row(state, m.device ? fit(m.device, 220) : ''),
-      '',
-      m.title ? fit(m.title, CARD_W) : m.connected ? 'Start something in Spotify.' : 'Set it up in HQ on your phone (Spotify section).',
-      m.artist ? fit(m.artist, CARD_W) : '',
-      '',
-      m.upNext ? fit(`UP NEXT   ${m.upNext}`, CARD_W) : '',
-    ])
-    hint = 'tap play/pause · ↑ next · ↓ prev'
-  } else if (page === 'score') {
+    return {
+      page,
+      texts: [
+        ...topBoxes(m, false),
+        { id: 3, name: 'lyrics', x: LYR_X, y: 64, w: LYR_W, h: CARD_H, text: musicPanel(m), pad: 4, capture: true },
+        { id: 4, name: 'hint', x: 0, y: 254, w: 380, h: 34, text: fit('tap play/pause · ↑ next · ↓ prev', 376), dim: 2 },
+        { id: 6, name: 'stats', x: 392, y: 254, w: 184, h: 34, text: fit(m.device ? `on ${m.device}` : stats, 180), dim: 3 },
+      ],
+      images: m.connected && m.artUrl ? [{ id: 7, name: 'art', x: ART.x, y: ART.y, w: ART.size, h: ART.size, src: m.artUrl }] : [],
+    }
+  }
+  if (page === 'score') {
     cardText = scoreCard(s, now)
     hint = 'tap back · 2x menu'
   } else {
@@ -362,7 +424,7 @@ export function buildPage(page: PageKey, s: AppState, m: MusicView, now: number)
   return {
     page,
     texts: [
-      ...topBoxes(m),
+      ...topBoxes(m, s.settings.lyricsOnKick),
       {
         id: 3,
         name: 'card',
@@ -385,7 +447,10 @@ export function buildPage(page: PageKey, s: AppState, m: MusicView, now: number)
 
 /** Structure signature: rebuild the page only when this changes. */
 export function structureKey(p: PageSpec): string {
-  const t = p.texts.map(b => `${b.id}:${b.x},${b.y},${b.w},${b.h}`).join('|')
+  const t = [
+    ...p.texts.map(b => `${b.id}:${b.x},${b.y},${b.w},${b.h}`),
+    ...(p.images ?? []).map(b => `i${b.id}:${b.x},${b.y},${b.w},${b.h}`),
+  ].join('|')
   const l = p.list ? `L${p.list.id}:${p.list.items.join('\u0001')}` : ''
   return `${p.page}#${t}#${l}`
 }

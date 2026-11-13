@@ -1,6 +1,7 @@
 // Kick: the nudge engine. Pure logic over AppState + a timestamp, so it can be
 // unit-tested with a fake clock. Rendering and delivery live elsewhere.
 import { line } from './coach'
+import { topicFor } from './meche'
 import type { AppState, DayLog, Nudge, Quest, QuestRun, Settings } from './types'
 
 export const MIN = 60_000
@@ -64,10 +65,23 @@ export function isOffDay(settings: Settings, key: string): boolean {
 export function questsForDay(s: AppState, key: string): Quest[] {
   const off = isOffDay(s.settings, key)
   const wd = weekday(key)
+  // On days the AI planner covers, its plan replaces the built-in growth habits.
+  const planned = s.plan?.dates?.includes(key)
   return s.quests
     .filter(q => q.active)
+    .filter(q => !(planned && q.category === 'growth' && q.source !== 'plan'))
     .filter(q => (q.days.length ? !off && q.days.includes(wd) : q.once === key))
     .sort((a, b) => a.time.localeCompare(b.time))
+}
+
+/** Display title/step for a quest on a given day (handles the rotating MechE topic). */
+export function questLabel(q: Quest | undefined, key: string): { title: string; step: string } {
+  if (!q) return { title: 'Quest', step: '' }
+  if (q.rotate === 'meche') {
+    const t = topicFor(key)
+    return { title: `MechE: ${t.title}`, step: t.step }
+  }
+  return { title: q.title, step: q.step }
 }
 
 function newRun(q: Quest, dueAt: number): QuestRun {
@@ -80,7 +94,6 @@ function newRun(q: Quest, dueAt: number): QuestRun {
     focusMs: 0,
     combo: 0,
     dodges: 0,
-    buddyPinged: false,
     xp: 0,
   }
 }
@@ -252,8 +265,9 @@ export function tick(s: AppState, now: number, ctx: TickContext = { headDownMs: 
   for (const run of runs) {
     const q = questOf(s, run.questId)
     if (!q) continue
-    const title = q.title
-    const vars = { t: title, s: q.step, b: st.buddyName, n: st.userName, k: st.trapMinutes }
+    const label = questLabel(q, day.date)
+    const title = label.title
+    const vars = { t: title, s: label.step, n: st.userName, k: st.trapMinutes }
 
     if (run.status === 'waiting' && now >= run.dueAt) {
       run.status = 'due'
@@ -271,20 +285,9 @@ export function tick(s: AppState, now: number, ctx: TickContext = { headDownMs: 
         const late = minsLate(run, now)
         const idx = run.level
         let key: 'due' | 'step' | 'spicy' | 'final' = idx === 0 ? 'due' : idx === 1 ? 'step' : 'spicy'
-        const buddyReady = !!st.buddyTopic && late >= st.buddyAfterMin
-        if (buddyReady && !run.finalWarned) {
+        if (late >= st.finalAfterMin && !run.finalWarned) {
           key = 'final'
           run.finalWarned = true
-        } else if (buddyReady && run.finalWarned && !run.buddyPinged) {
-          run.buddyPinged = true
-          out.push({
-            kind: 'buddy',
-            questId: q.id,
-            title: `HQ: ${st.userName || 'Your friend'} needs a push`,
-            text: line(st.persona, 'buddy', { ...vars, m: late }, idx),
-            priority: 4,
-            toBuddy: true,
-          })
         }
         const text = line(st.persona, key, { ...vars, m: late }, idx + q.id.length)
         run.lastLine = text
@@ -392,7 +395,7 @@ function finish(s: AppState, run: QuestRun, now: number): void {
   s.profile.totalKOs += 1
   const day = today(s, now)
   if (day.pinnedId === run.questId) day.pinnedId = undefined
-  const text = line(s.settings.persona, 'ko', { t: q?.title, x: xp }, s.profile.totalKOs)
+  const text = line(s.settings.persona, 'ko', { t: questLabel(q, today(s, now).date).title, x: xp }, s.profile.totalKOs)
   run.lastLine = text
   toast(s, now, text, 12_000)
 }
@@ -409,7 +412,7 @@ export function startTrap(s: AppState, run: QuestRun, now: number): void {
   run.focusStartedAt = now
   run.checkinPendingSince = undefined
   award(s, run, now, 10)
-  const text = line(s.settings.persona, 'trapStart', { t: q?.title, k: s.settings.trapMinutes }, run.dodges)
+  const text = line(s.settings.persona, 'trapStart', { t: questLabel(q, day.date).title, k: s.settings.trapMinutes }, run.dodges)
   run.lastLine = text
   toast(s, now, text)
 }
@@ -490,7 +493,7 @@ export function act(s: AppState, now: number, a: Action): boolean {
       if (run.status === 'waiting') return false
       run.dodges += 1
       run.nextNudgeAt = now + 10 * MIN
-      const text = line(st.persona, 'snooze', { t: q?.title }, run.dodges)
+      const text = line(st.persona, 'snooze', { t: questLabel(q, day.date).title }, run.dodges)
       run.lastLine = text
       toast(s, now, text)
       return true

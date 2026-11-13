@@ -5,7 +5,11 @@ import { ImuReportPace, OsEventTypeList, type EvenHubEvent } from '@evenrealitie
 import { bridge, call, connect, isReal, storageGet, storageSet } from './bridge'
 import { defaultState, hydrate } from './defaults'
 import { act, MIN, tick, type Action, currentRun, needsLockIn, today, dateKey, pad } from './engine'
-import { invalidate, isStarted, render } from './glasses'
+import { invalidate, isStarted, render, setImageSource } from './glasses'
+import { artPng, placeholderArt } from './art'
+import { getLyrics, lineIndex, setLyricsForTest } from './lyrics'
+import { syncPlan } from './plan'
+import { ART, type MusicView } from './view'
 import { HeadTracker } from './imu'
 import { push } from './notify'
 import { beginLogin, completeLoginIfReturning, Spotify, type SpotifyHost } from './spotify'
@@ -104,11 +108,36 @@ async function syncImu(): Promise<void> {
 }
 let calibrating = false
 
+// ---------------------------------------------------------------- music + lyrics
+
+/** Now-playing view with the current lyric lines filled in. */
+function musicNow(now: number): MusicView {
+  const m = spotify.live(now)
+  if (!m.connected || !m.trackId || !m.title) return m
+  const ref = { id: m.trackId, title: m.title, artist: m.artist, album: m.album ?? '', durationMs: m.durationMs }
+  const lyrics = lyricCache.get(m.trackId)
+  if (lyrics === undefined) {
+    void getLyrics(ref).then(l => lyricCache.set(m.trackId!, l))
+    return m
+  }
+  if (!lyrics || !lyrics.synced.length) return m
+  const i = lineIndex(lyrics.synced, m.progressMs + 300)
+  m.lyric = i >= 0 ? lyrics.synced[i].text : ''
+  m.lyricNext = lyrics.synced.slice(i + 1, i + 4).map(l => l.text).filter(Boolean)
+  return m
+}
+const lyricCache = new Map<string, Awaited<ReturnType<typeof getLyrics>>>()
+
+setImageSource(async box => {
+  if (box.src === 'placeholder') return placeholderArt(ART.size)
+  return artPng(box.src, ART.size)
+})
+
 // ---------------------------------------------------------------- render loop
 
 async function draw(): Promise<void> {
   const now = Date.now()
-  const spec = buildPage(page, state, spotify.live(now), now)
+  const spec = buildPage(page, state, musicNow(now), now)
   ui?.preview(spec)
   if (foreground) await render(spec)
 }
@@ -116,10 +145,6 @@ async function draw(): Promise<void> {
 function deliver(nudges: Nudge[]): void {
   for (const n of nudges) {
     note(`${n.kind}: ${n.text}`)
-    if (n.toBuddy) {
-      void push(state.settings, n)
-      continue
-    }
     if (n.kind === 'scoreboard' && foreground && page === 'kick') page = 'score'
     const offScreen = !foreground || !wearing
     if (state.settings.ntfyEnabled && (offScreen || state.settings.notifyWhenOpen)) void push(state.settings, n)
@@ -127,9 +152,23 @@ function deliver(nudges: Nudge[]): void {
 }
 
 let loops = 0
+let planStatus = ''
+let lastPlanSync = 0
+async function doPlanSync(force = false): Promise<void> {
+  const now = Date.now()
+  if (!force && now - lastPlanSync < 30 * MIN) return
+  lastPlanSync = now
+  planStatus = await syncPlan(state, now)
+  note(planStatus)
+  void save(true)
+  void draw()
+  ui?.refresh(true)
+}
+
 function loop(): void {
   const now = Date.now()
   if (++loops % 10 === 0) void syncImu()
+  if (loops % 60 === 0) void doPlanSync()
   const nudges = tick(state, now, { headDownMs: head.downMs(state.settings.doomscrollMinutes * MIN, now) })
   if (nudges.length) {
     deliver(nudges)
@@ -218,6 +257,7 @@ function handle(e: EvenHubEvent): void {
     case OsEventTypeList.FOREGROUND_ENTER_EVENT:
       foreground = true
       invalidate()
+      void doPlanSync()
       void spotify.poll().then(draw)
       return
     case OsEventTypeList.FOREGROUND_EXIT_EVENT:
@@ -294,9 +334,9 @@ async function boot(): Promise<void> {
       void draw()
     },
     testPush: () => push(state.settings, { kind: 'nudge', title: 'HQ: test', text: 'If you see this on your glasses, nudges will reach you anywhere.', priority: 3 }),
-    testBuddyPush: () =>
-      push(state.settings, { kind: 'buddy', title: 'HQ: test', text: `${state.settings.userName} added you as their HQ buddy.`, priority: 3, toBuddy: true }),
     connectSpotify: () => beginLogin(spotifyHost),
+    syncPlan: () => doPlanSync(true),
+    planStatus: () => planStatus,
     demo: () => spawnDemo(),
     startCalibration: async () => {
       calibrating = true
@@ -316,15 +356,31 @@ async function boot(): Promise<void> {
       wearing = st.isWearing ?? true
     })
   }
+  // A QR like .../hq/#key=... sets the plan key once, then the hash is cleared.
+  const hash = new URLSearchParams(location.hash.slice(1))
+  if (hash.get('key')) {
+    state.settings.planKey = hash.get('key')!
+    history.replaceState({}, document.title, location.pathname + location.search)
+    void save(true)
+  }
   const qp = new URLSearchParams(location.search)
   if (qp.has('trap')) state.settings.trapMinutes = Number(qp.get('trap')) || 5 // testing aid
   if (qp.has('checkin')) state.settings.checkinEveryMin = Number(qp.get('checkin')) || 20 // testing aid
   if (qp.has('demo')) spawnDemo()
-  if (qp.has('mockspotify')) spotify.mockPlay('Slowtown', 'twenty one pilots', 297_000, 'Stressed Out - twenty one pilots') // testing aid
+  if (qp.has('mockspotify')) {
+    // Testing aid: fake track with placeholder lyric lines (no real lyrics).
+    spotify.mockPlay('Demo Track', 'Demo Artist', 200_000, 'Another Demo - Demo Artist')
+    if (!qp.has('nolyrics')) {
+      const fake = Array.from({ length: 40 }, (_, i) => ({ ms: i * 4000, text: `Placeholder lyric line ${i + 1}` }))
+      setLyricsForTest('mock', { synced: fake, plainOnly: false })
+      lyricCache.set('mock', { synced: fake, plainOnly: false })
+    }
+  }
   loop()
   await draw()
   await syncImu()
   void spotify.poll().then(draw)
+  void doPlanSync(true)
 
   setInterval(loop, 1000)
   setInterval(() => {

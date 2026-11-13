@@ -4,6 +4,8 @@ name: Deploy HQ to GitHub Pages
 on:
   push:
     branches: [main]
+    # The daily planner commits plan/plan.json; that doesn't need a redeploy.
+    paths-ignore: ['plan/**']
   workflow_dispatch:
 
 permissions:

@@ -5,7 +5,6 @@ import type { Nudge, Settings } from './types'
 
 const TAGS: Record<string, string> = {
   nudge: 'crossed_swords',
-  buddy: 'rotating_light',
   checkin: 'eyes',
   trapdone: 'stopwatch',
   scoreboard: 'trophy',
@@ -14,7 +13,7 @@ const TAGS: Record<string, string> = {
 }
 
 export async function push(settings: Settings, n: Nudge): Promise<boolean> {
-  const topic = (n.toBuddy ? settings.buddyTopic : settings.ntfyTopic).trim()
+  const topic = settings.ntfyTopic.trim()
   if (!topic) return false
   const server = (settings.ntfyServer || 'https://ntfy.sh').replace(/\/+$/, '')
   // Title/tags/priority go in the query string so this stays a "simple" CORS

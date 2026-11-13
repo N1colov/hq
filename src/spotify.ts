@@ -185,7 +185,7 @@ export class Spotify {
 
   mockPlay(title: string, artist: string, durationMs: number, upNext: string): void {
     this.mock = true
-    Object.assign(this.view, { connected: true, hasClientId: true, playing: true, title, artist, durationMs, progressMs: 41_000, device: 'iPhone', upNext })
+    Object.assign(this.view, { trackId: 'mock', album: 'Demo Album', artUrl: 'placeholder', connected: true, hasClientId: true, playing: true, title, artist, durationMs, progressMs: 41_000, device: 'iPhone', upNext })
     this.fetchedAt = Date.now()
   }
 
@@ -197,7 +197,7 @@ export class Spotify {
       const res = await this.req('GET', '/me/player?additional_types=episode')
       if (!res) return
       if (res.status === 204) {
-        Object.assign(this.view, { playing: false, title: '', artist: '', progressMs: 0, durationMs: 0, device: '', error: undefined })
+        Object.assign(this.view, { playing: false, title: '', artist: '', progressMs: 0, durationMs: 0, device: '', trackId: '', artUrl: '', album: '', error: undefined })
         this.fetchedAt = Date.now()
         return
       }
@@ -209,7 +209,12 @@ export class Spotify {
       const d = await res.json()
       const item = d.item ?? {}
       const artist = (item.artists ?? []).map((x: { name: string }) => x.name).join(', ') || item.show?.name || ''
+      const imgs: Array<{ url: string; width: number }> = item.album?.images ?? item.images ?? []
+      const art = imgs.find(i => i.width && i.width <= 320) ?? imgs[imgs.length - 1] ?? imgs[0]
       Object.assign(this.view, {
+        trackId: item.id ?? '',
+        album: item.album?.name ?? '',
+        artUrl: art?.url ?? '',
         playing: !!d.is_playing,
         title: item.name ?? '',
         artist,

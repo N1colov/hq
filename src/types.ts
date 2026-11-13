@@ -3,9 +3,19 @@
 
 export type Persona = 'hype' | 'drill' | 'robot'
 
+export type QuestCategory = 'task' | 'growth' | 'deadline' | 'exam'
+
 export interface Quest {
   id: string
   title: string
+  /** growth = daily self-improvement habit; the AI plan replaces these on days it covers. */
+  category?: QuestCategory
+  /** 'plan' = written by the daily AI planner from Notion. */
+  source?: 'manual' | 'plan'
+  /** Rotate the title through a topic list (MechE topic of the day). */
+  rotate?: 'meche'
+  /** Extra context shown under the step (e.g. "Due today", "Exam Mon"). */
+  note?: string
   /** The tiniest possible first step, shown when you stall. */
   step: string
   /** Start time, "HH:MM" 24h local. */
@@ -44,7 +54,6 @@ export interface QuestRun {
   checkinPendingSince?: number
   combo: number
   dodges: number
-  buddyPinged: boolean
   lastDoomAt?: number
   finalWarned?: boolean
   /** Latest coach line for this quest, shown on the card. */
@@ -82,7 +91,8 @@ export interface Settings {
   daysOff: number[]
   trapMinutes: number
   escalateEveryMin: number
-  buddyAfterMin: number
+  /** Minutes late before the coach's final warning. */
+  finalAfterMin: number
   /** 0 disables check-ins during focus. */
   checkinEveryMin: number
   checkinGraceMin: number
@@ -93,8 +103,12 @@ export interface Settings {
   ntfyEnabled: boolean
   /** Also push to the phone while HQ is open on the glasses. */
   notifyWhenOpen: boolean
-  buddyName: string
-  buddyTopic: string
+  /** Show the current lyric line under the song on the Kick screen. */
+  lyricsOnKick: boolean
+  /** Encrypted daily plan written by the AI planner. */
+  planUrl: string
+  /** AES-256-GCM key (base64url) for the plan file. */
+  planKey: string
   doomscrollEnabled: boolean
   doomscrollMinutes: number
   nodEnabled: boolean
@@ -108,6 +122,16 @@ export interface SpotifyAuth {
   expiresAt?: number
 }
 
+export interface PlanMeta {
+  syncedAt?: number
+  generatedAt?: string
+  /** Morning briefing per date from the planner. */
+  briefs: Record<string, string>
+  /** Dates the plan covers (growth habits are replaced on these days). */
+  dates: string[]
+  error?: string
+}
+
 export interface AppState {
   version: 1
   savedAt: number
@@ -117,6 +141,7 @@ export interface AppState {
   /** Day logs keyed by date, only the last ~14 days are kept. */
   days: Record<string, DayLog>
   spotify: SpotifyAuth
+  plan: PlanMeta
   /** Short message shown on the HUD (coach line, feedback). */
   toast?: { text: string; until: number }
   /** Scoreboard overlay requested by the engine. */
@@ -125,7 +150,6 @@ export interface AppState {
 
 export type NudgeKind =
   | 'nudge'
-  | 'buddy'
   | 'checkin'
   | 'trapdone'
   | 'scoreboard'
@@ -139,6 +163,4 @@ export interface Nudge {
   text: string
   /** ntfy priority 1..5 */
   priority: number
-  /** Send to the buddy topic instead of the user. */
-  toBuddy?: boolean
 }

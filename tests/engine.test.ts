@@ -10,34 +10,27 @@ const at = (h: number, m = 0, d = 11) => new Date(2026, 10, d, h, m, 0, 0).getTi
 
 function fresh(): AppState {
   const s = defaultState()
-  s.settings.buddyTopic = 'buddy-topic'
-  s.settings.buddyName = 'Noah'
   s.quests = [
     { id: 'thermo', title: 'Thermo HW', step: 'Open the PDF', time: '19:00', minutes: 60, days: [0, 1, 2, 3, 4], active: true },
   ]
   return s
 }
 
-test('nudge ladder escalates every 10 min and pings the buddy after a final warning', () => {
+test('nudge ladder escalates every 10 min with a final warning at 30', () => {
   const s = fresh()
   assert.equal(tick(s, at(18, 59)).length, 0)
   let n = tick(s, at(19, 0))
   assert.equal(n.length, 1)
   assert.equal(n[0].kind, 'nudge')
-  assert.match(n[0].text, /Thermo HW|5/)
   assert.equal(tick(s, at(19, 5)).length, 0, 'no nudge between rungs')
   n = tick(s, at(19, 10))
   assert.match(n[0].text, /open the PDF/i, 'second rung shows the tiny first step')
   n = tick(s, at(19, 20))
   assert.equal(n[0].kind, 'nudge')
   n = tick(s, at(19, 30))
-  assert.match(n[0].text, /Noah|nobody/i, 'final warning before buddy ping')
-  assert.ok(!n.some(x => x.toBuddy))
+  assert.equal(today(s, at(19, 30)).runs.thermo.finalWarned, true, 'final warning at 30 min late')
   assert.equal(tick(s, at(19, 40)).length, 0, 'ladder slows down after the 4th rung')
-  n = tick(s, at(19, 45))
-  assert.ok(n.some(x => x.toBuddy && x.kind === 'buddy'), 'buddy pinged on the next rung')
-  n = tick(s, at(20, 0))
-  assert.ok(!n.some(x => x.toBuddy), 'buddy only pinged once')
+  assert.equal(tick(s, at(19, 45)).length, 1)
 })
 
 test('snooze pushes the next nudge 10 min out and levels up the boss', () => {

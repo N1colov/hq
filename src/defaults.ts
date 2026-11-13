@@ -16,7 +16,7 @@ export function defaultSettings(): Settings {
     daysOff: [6], // Saturday
     trapMinutes: 5,
     escalateEveryMin: 10,
-    buddyAfterMin: 30,
+    finalAfterMin: 30,
     checkinEveryMin: 20,
     checkinGraceMin: 5,
     morningTime: '08:00',
@@ -25,8 +25,9 @@ export function defaultSettings(): Settings {
     ntfyTopic: `hq-${uid(12)}`,
     ntfyEnabled: true,
     notifyWhenOpen: false,
-    buddyName: '',
-    buddyTopic: '',
+    lyricsOnKick: true,
+    planUrl: 'https://raw.githubusercontent.com/N1colov/hq/main/plan/plan.json',
+    planKey: '',
     doomscrollEnabled: true,
     doomscrollMinutes: 15,
     nodEnabled: false,
@@ -34,37 +35,55 @@ export function defaultSettings(): Settings {
   }
 }
 
+/** Daily "be a better person" habits. The AI planner replaces these on days it plans. */
 export function sampleQuests(): Quest[] {
   return [
     {
       id: uid(),
-      title: 'Z2 run',
-      step: 'Put your running shoes on',
-      time: '07:30',
-      minutes: 45,
-      days: [1, 3, 5],
+      title: 'Train (gym / tri)',
+      step: 'Put your gym clothes on',
+      time: '16:30',
+      minutes: 60,
+      days: [1, 2, 4, 5],
+      category: 'growth',
       active: true,
     },
     {
       id: uid(),
-      title: 'Statics review',
-      step: 'Open your notes to the last lecture',
-      time: '16:00',
+      title: 'Internship apps',
+      step: 'Open Handshake and pick one posting',
+      time: '13:00',
       minutes: 30,
-      days: [2, 4],
+      days: [1, 3, 5],
+      category: 'growth',
+      note: 'Goal: 2 applications',
       active: true,
     },
     {
       id: uid(),
-      title: 'Thermo HW',
-      step: 'Open the PDF and read problem 1',
+      title: 'Exam prep',
+      step: 'Do one practice problem from your weakest topic',
       time: '19:00',
       minutes: 60,
       days: [0, 1, 2, 3, 4],
+      category: 'growth',
+      active: true,
+    },
+    {
+      id: uid(),
+      title: 'MechE topic of the day',
+      step: 'Learn one core idea',
+      time: '21:00',
+      minutes: 30,
+      days: [0, 1, 2, 3, 4, 5],
+      category: 'growth',
+      rotate: 'meche',
       active: true,
     },
   ]
 }
+
+const OLD_SAMPLE_TITLES = ['Statics review', 'Thermo HW', 'Z2 run']
 
 export function defaultState(): AppState {
   return {
@@ -75,6 +94,7 @@ export function defaultState(): AppState {
     profile: { xp: 0, streak: 0, bestStreak: 0, totalKOs: 0 },
     days: {},
     spotify: {},
+    plan: { briefs: {}, dates: [] },
   }
 }
 
@@ -83,14 +103,21 @@ export function hydrate(raw: unknown): AppState {
   const base = defaultState()
   if (!raw || typeof raw !== 'object') return base
   const r = raw as Partial<AppState>
+  let quests = Array.isArray(r.quests) ? r.quests : base.quests
+  // v1 shipped with placeholder quests; swap them for the growth habits if untouched.
+  const titles = quests.map(q => q.title).sort()
+  if (titles.join('|') === OLD_SAMPLE_TITLES.join('|')) quests = base.quests
+  const settings = { ...base.settings, ...(r.settings ?? {}) } as Record<string, unknown>
+  for (const k of ['buddyName', 'buddyTopic', 'buddyAfterMin']) delete settings[k]
   return {
     ...base,
     ...r,
     version: 1,
-    quests: Array.isArray(r.quests) ? r.quests : base.quests,
-    settings: { ...base.settings, ...(r.settings ?? {}) },
+    quests,
+    settings: settings as unknown as AppState['settings'],
     profile: { ...base.profile, ...(r.profile ?? {}) },
     days: r.days && typeof r.days === 'object' ? r.days : {},
     spotify: r.spotify && typeof r.spotify === 'object' ? r.spotify : {},
+    plan: { ...base.plan, ...(r.plan ?? {}) },
   }
 }
